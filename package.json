@@ -1,0 +1,20 @@
+{
+  "name": "codex-ollama-proxy",
+  "version": "0.1.0",
+  "description": "Codex OAuth → Ollama API compatible proxy",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "test": "bunx --bun vitest run",
+    "test:watch": "bunx --bun vitest"
+  },
+  "dependencies": {
+    "elysia": "^1.2",
+    "@elysiajs/cors": "^1.2"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "vitest": "^3.0"
+  }
+}

@@ -1,0 +1,9 @@
+node_modules/
+dist/
+bun.lockb
+.env
+*.log
+.DS_Store
+
+.agents
+.claude
