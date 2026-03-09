@@ -2,6 +2,18 @@ import type { AuthInfo } from "../../auth"
 import { getAuthHeaders } from "../../auth"
 import type { CodexResponsesRequest } from "./types"
 
+export class BackendApiError extends Error {
+  readonly statusCode: number
+  readonly responseBody: string
+
+  constructor(statusCode: number, responseBody: string) {
+    super(`Codex API error ${statusCode}: ${responseBody}`)
+    this.name = "BackendApiError"
+    this.statusCode = statusCode
+    this.responseBody = responseBody
+  }
+}
+
 const BROWSER_HEADERS: Record<string, string> = {
   "Content-Type": "application/json",
   Accept: "text/event-stream",
@@ -44,7 +56,7 @@ export function createCodexClient(options: CodexClientOptions) {
 
     if (!response.ok) {
       const text = await response.text().catch(() => "")
-      throw new Error(`Codex API error ${response.status}: ${text}`)
+      throw new BackendApiError(response.status, text)
     }
 
     return response

@@ -1,9 +1,24 @@
 import Elysia from "elysia"
 import type { BackendAdapter } from "../providers/types"
+import { BackendApiError } from "../providers/codex/client"
+import { setErrorDetail } from "./logger"
 import { createChatHandler } from "../routes/chat"
 import { createGenerateHandler } from "../routes/generate"
 import type { OllamaChatRequest } from "../types/ollama"
 import type { OllamaGenerateRequest } from "../types/ollama"
+function mapBackendError(err: unknown): { status: number; message: string } {
+  if (err instanceof BackendApiError) {
+    const { statusCode } = err
+    if (statusCode === 401 || statusCode === 403) {
+      return { status: 401, message: `Authentication failed (upstream ${statusCode}): ${err.responseBody.slice(0, 1000)}` }
+    }
+    if (statusCode === 429) {
+      return { status: 429, message: "Rate limited by upstream API. Please try again later." }
+    }
+    return { status: 502, message: `Upstream API error ${statusCode}: ${err.responseBody.slice(0, 1000)}` }
+  }
+  return { status: 502, message: `Backend error: ${(err as Error).message}` }
+}
 
 export function createOllamaPlugin(adapter: BackendAdapter) {
   const chatHandler = createChatHandler(adapter)
@@ -45,16 +60,16 @@ export function createOllamaPlugin(adapter: BackendAdapter) {
         model_info: {
           "general.architecture": "gpt",
           "general.basename": modelName,
-          "gpt.context_length": 128000,
+          "gpt.context_length": adapter.models.getContextLength(modelName),
         },
-        capabilities: ["completion", "tools"],
+        capabilities: adapter.models.getCapabilities(modelName),
       }
     })
     .post("/embed", ({ set }) => {
       set.status = 501
       return { error: "Embedding is not supported by this proxy" }
     })
-    .post("/chat", async ({ body, set }) => {
+    .post("/chat", async ({ body, set, request }) => {
       const b = body as Record<string, unknown>
       if (!b.model || !b.messages) {
         set.status = 400
@@ -63,11 +78,13 @@ export function createOllamaPlugin(adapter: BackendAdapter) {
       try {
         return await chatHandler(body as unknown as OllamaChatRequest)
       } catch (err) {
-        set.status = 502
-        return { error: `Backend API error: ${(err as Error).message}` }
+        const mapped = mapBackendError(err)
+        setErrorDetail(request, mapped.message)
+        set.status = mapped.status
+        return { error: mapped.message }
       }
     })
-    .post("/generate", async ({ body, set }) => {
+    .post("/generate", async ({ body, set, request }) => {
       const b = body as Record<string, unknown>
       if (!b.model || !b.prompt) {
         set.status = 400
@@ -76,8 +93,10 @@ export function createOllamaPlugin(adapter: BackendAdapter) {
       try {
         return await generateHandler(body as unknown as OllamaGenerateRequest)
       } catch (err) {
-        set.status = 502
-        return { error: `Backend API error: ${(err as Error).message}` }
+        const mapped = mapBackendError(err)
+        setErrorDetail(request, mapped.message)
+        set.status = mapped.status
+        return { error: mapped.message }
       }
     })
     .post("/copy", () => "")

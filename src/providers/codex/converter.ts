@@ -1,11 +1,48 @@
 import type { OllamaChatRequest, OllamaGenerateRequest } from "../../types/ollama"
 import type { CodexResponsesRequest, CodexInputItem, CodexContentItem } from "./types"
-import type { OpenAITool, OpenAIChatMessage, OpenAIChatRequest } from "../../types/openai"
+import type { OpenAITool, OpenAIChatMessage, OpenAIChatRequest, OpenAIMessageContent } from "../../types/openai"
+import { getCapabilities } from "./models"
+
+function modelSupportsVision(model: string): boolean {
+  return getCapabilities(model).includes("vision")
+}
+
+
+function extractText(content: OpenAIMessageContent): string {
+  if (content === null || content === undefined) return ""
+  if (typeof content === "string") return content
+  return content
+    .filter((part): part is { type: "text"; text: string } => part.type === "text")
+    .map((part) => part.text)
+    .join("\n")
+}
+
+function convertUserContent(content: OpenAIMessageContent): readonly CodexContentItem[] {
+  if (content === null || content === undefined) return [{ type: "input_text", text: "" }]
+  if (typeof content === "string") return [{ type: "input_text", text: content }]
+  return content.map((part) => {
+    if (part.type === "image_url") {
+      return { type: "input_image" as const, image_url: part.image_url.url }
+    }
+    return { type: "input_text" as const, text: part.text }
+  })
+}
+
+function stripImages(items: readonly CodexInputItem[]): readonly CodexInputItem[] {
+  return items.map((item) => {
+    if (item.type !== "message") return item
+    const filtered = (item.content as readonly CodexContentItem[]).filter((c) => c.type !== "input_image")
+    if (filtered.length === 0) {
+      return { ...item, content: [{ type: "input_text" as const, text: "" }] }
+    }
+    return { ...item, content: filtered }
+  })
+}
 
 const MODEL_ALIASES: Record<string, string> = {
   codex: "gpt-5.3-codex",
-  "codex-mini": "gpt-5.1-codex-mini",
-  gpt5: "gpt-5",
+  spark: "gpt-5.3-codex-spark",
+  gpt5: "gpt-5.4",
 }
 
 export function resolveModel(model: string): string {
@@ -24,8 +61,6 @@ export function chatRequestToCodex(req: OllamaChatRequest): CodexResponsesReques
       continue
     }
 
-    const content: CodexContentItem[] = [{ type: "input_text", text: msg.content }]
-
     if (msg.role === "assistant") {
       inputItems.push({
         type: "message",
@@ -33,6 +68,12 @@ export function chatRequestToCodex(req: OllamaChatRequest): CodexResponsesReques
         content: [{ type: "output_text", text: msg.content }],
       })
     } else {
+      const content: CodexContentItem[] = [{ type: "input_text", text: msg.content }]
+      if (msg.images?.length) {
+        for (const img of msg.images) {
+          content.push({ type: "input_image", image_url: `data:image/png;base64,${img}` })
+        }
+      }
       inputItems.push({ type: "message", role: msg.role, content })
     }
   }
@@ -40,7 +81,7 @@ export function chatRequestToCodex(req: OllamaChatRequest): CodexResponsesReques
   return {
     model: resolvedModel,
     instructions: systemMessages.join("\n\n"),
-    input: inputItems,
+    input: modelSupportsVision(resolvedModel) ? inputItems : stripImages(inputItems),
     tools: [],
     tool_choice: "auto",
     parallel_tool_calls: false,
@@ -52,18 +93,24 @@ export function chatRequestToCodex(req: OllamaChatRequest): CodexResponsesReques
 
 export function generateRequestToCodex(req: OllamaGenerateRequest): CodexResponsesRequest {
   const resolvedModel = resolveModel(req.model)
+  const content: CodexContentItem[] = [{ type: "input_text", text: req.prompt }]
+  if (req.images?.length) {
+    for (const img of req.images) {
+      content.push({ type: "input_image", image_url: `data:image/png;base64,${img}` })
+    }
+  }
   const input: CodexInputItem[] = [
     {
       type: "message",
       role: "user",
-      content: [{ type: "input_text", text: req.prompt }],
+      content,
     },
   ]
 
   return {
     model: resolvedModel,
     instructions: req.system ?? "",
-    input,
+    input: modelSupportsVision(resolvedModel) ? input : stripImages(input),
     tools: [],
     tool_choice: "auto",
     parallel_tool_calls: false,
@@ -96,7 +143,7 @@ export function convertOpenAIMessagesToCodex(
 
   for (const msg of messages) {
     if (msg.role === "system") {
-      systemMessages.push(msg.content ?? "")
+      systemMessages.push(extractText(msg.content))
       continue
     }
 
@@ -106,7 +153,7 @@ export function convertOpenAIMessagesToCodex(
         inputItems.push({
           type: "message",
           role: "assistant",
-          content: [{ type: "output_text", text: msg.content }],
+          content: [{ type: "output_text", text: extractText(msg.content) }],
         })
       }
       for (const tc of msg.tool_calls) {
@@ -124,7 +171,7 @@ export function convertOpenAIMessagesToCodex(
       inputItems.push({
         type: "function_call_output",
         call_id: msg.tool_call_id ?? "",
-        output: msg.content ?? "",
+        output: extractText(msg.content),
       })
       continue
     }
@@ -133,7 +180,7 @@ export function convertOpenAIMessagesToCodex(
       inputItems.push({
         type: "message",
         role: "assistant",
-        content: [{ type: "output_text", text: msg.content ?? "" }],
+        content: [{ type: "output_text", text: extractText(msg.content) }],
       })
       continue
     }
@@ -142,7 +189,7 @@ export function convertOpenAIMessagesToCodex(
     inputItems.push({
       type: "message",
       role: "user",
-      content: [{ type: "input_text", text: msg.content ?? "" }],
+      content: convertUserContent(msg.content),
     })
   }
 
@@ -160,14 +207,12 @@ export function openaiChatRequestToCodex(req: OpenAIChatRequest): CodexResponses
   return {
     model: resolvedModel,
     instructions,
-    input,
+    input: modelSupportsVision(resolvedModel) ? input : stripImages(input),
     tools,
     tool_choice: typeof req.tool_choice === "string" ? req.tool_choice : "auto",
     parallel_tool_calls: tools.length > 0,
     store: false,
     stream: req.stream !== false,
-    include: ["usage"],
-    ...(req.temperature !== undefined && { temperature: req.temperature }),
-    ...(req.max_tokens !== undefined && { max_output_tokens: req.max_tokens }),
+    include: [],
   }
 }

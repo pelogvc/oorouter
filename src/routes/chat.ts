@@ -39,7 +39,11 @@ export function createChatHandler(adapter: BackendAdapter) {
     )
 
     return new Response(encoded, {
-      headers: { "Content-Type": "application/x-ndjson" },
+      headers: {
+        "Content-Type": "application/x-ndjson",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
     })
   }
 }

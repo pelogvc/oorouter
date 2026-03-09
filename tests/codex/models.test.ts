@@ -11,17 +11,16 @@ describe("getVisibleModels", () => {
     const models = getVisibleModels()
     expect(models.length).toBe(5)
     const names = models.map((m) => m.name)
+    expect(names).toContain("gpt-5.4:latest")
     expect(names).toContain("gpt-5.3-codex:latest")
+    expect(names).toContain("gpt-5.3-codex-spark:latest")
     expect(names).toContain("gpt-5.2-codex:latest")
-    expect(names).toContain("gpt-5.1-codex-max:latest")
-    expect(names).toContain("gpt-5.1-codex-mini:latest")
     expect(names).toContain("gpt-5.2:latest")
   })
 
   test("does not include hidden models", () => {
     const names = getVisibleModels().map((m) => m.name)
-    expect(names).not.toContain("gpt-5.1-codex:latest")
-    expect(names).not.toContain("gpt-5.1:latest")
+    expect(names).not.toContain("gpt-5.4-pro:latest")
     expect(names).not.toContain("gpt-5:latest")
     expect(names).not.toContain("gpt-5-codex:latest")
     expect(names).not.toContain("gpt-5-codex-mini:latest")
@@ -39,21 +38,22 @@ describe("getVisibleModels", () => {
 })
 
 describe("getAllModels", () => {
-  test("returns all 10 models", () => {
-    expect(getAllModels().length).toBe(10)
+  test("returns all 9 models", () => {
+    expect(getAllModels().length).toBe(9)
   })
-
   test("includes both visible and hidden models", () => {
     const names = getAllModels().map((m) => m.name)
+    expect(names).toContain("gpt-5.4:latest")
     expect(names).toContain("gpt-5.3-codex:latest")
+    expect(names).toContain("gpt-5.3-codex-spark:latest")
     expect(names).toContain("gpt-5:latest")
   })
 })
-
 describe("modelExists", () => {
   test("returns true for existing model", () => {
     expect(modelExists("gpt-5.3-codex")).toBe(true)
     expect(modelExists("gpt-5")).toBe(true)
+    expect(modelExists("gpt-5.4")).toBe(true)
   })
 
   test("strips :latest suffix", () => {
@@ -66,8 +66,9 @@ describe("modelExists", () => {
   })
 
   test("returns true for hidden models", () => {
-    expect(modelExists("gpt-5.1-codex")).toBe(true)
+    expect(modelExists("gpt-5-codex")).toBe(true)
     expect(modelExists("gpt-5-codex-mini")).toBe(true)
+    expect(modelExists("gpt-5.4-pro")).toBe(true)
   })
 })
 

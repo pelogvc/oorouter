@@ -213,7 +213,7 @@ describe("Integration: POST /api/show", () => {
     expect(data.details.family).toBe("gpt")
     expect(data.model_info["general.architecture"]).toBe("gpt")
     expect(data.model_info["general.basename"]).toBe("gpt-5.3-codex")
-    expect(data.model_info["gpt.context_length"]).toBe(128000)
+    expect(data.model_info["gpt.context_length"]).toBe(400_000)
     expect(data.capabilities).toContain("completion")
     expect(data.capabilities).toContain("tools")
   })

@@ -6,5 +6,5 @@ const config = loadConfig()
 const adapter = await createBackendAdapter(config)
 const app = createApp(adapter).listen(config.port)
 
-console.log(`codex-ollama-proxy listening on http://localhost:${app.server?.port}`)
-console.log(`Backend: ${adapter.name}`)
+process.stdout.write(`codex-ollama-proxy listening on http://localhost:${app.server?.port}\n`)
+process.stdout.write(`Backend: ${adapter.name}\n`)

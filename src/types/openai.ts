@@ -34,11 +34,25 @@ export interface OpenAIToolCallDelta {
   }
 }
 
-// Chat messages
+// Content parts (multimodal)
 
+export interface OpenAITextContentPart {
+  readonly type: "text"
+  readonly text: string
+}
+
+export interface OpenAIImageContentPart {
+  readonly type: "image_url"
+  readonly image_url: { readonly url: string }
+}
+
+export type OpenAIContentPart = OpenAITextContentPart | OpenAIImageContentPart
+export type OpenAIMessageContent = string | null | readonly OpenAIContentPart[]
+
+// Chat messages
 export interface OpenAIChatMessage {
   readonly role: "system" | "user" | "assistant" | "tool"
-  readonly content: string | null
+  readonly content: OpenAIMessageContent
   readonly tool_calls?: readonly OpenAIToolCall[]
   readonly tool_call_id?: string
 }

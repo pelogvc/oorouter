@@ -16,10 +16,17 @@ export interface CodexAuth {
 
 // Responses API Request
 
-export interface CodexContentItem {
+export interface CodexTextContentItem {
   readonly type: "input_text" | "output_text"
   readonly text: string
 }
+
+export interface CodexImageContentItem {
+  readonly type: "input_image"
+  readonly image_url: string
+}
+
+export type CodexContentItem = CodexTextContentItem | CodexImageContentItem
 
 export interface CodexMessageItem {
   readonly type: "message"

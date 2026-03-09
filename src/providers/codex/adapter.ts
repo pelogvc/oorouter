@@ -5,7 +5,7 @@ import type { CodexResponsesRequest, CodexAuth } from "./types"
 import { resolveModel, chatRequestToCodex, generateRequestToCodex, openaiChatRequestToCodex } from "./converter"
 import { createChatStreamTransformer, createGenerateStreamTransformer, collectSSEResponse } from "./streaming"
 import { createOpenAIStreamContext, createOpenAIStreamTransformer, collectOpenAIResponse } from "./openai-streaming"
-import { getVisibleModels, getAllModels, modelExists, createModelDetails } from "./models"
+import { getVisibleModels, getAllModels, modelExists, getContextLength, getCapabilities, createModelDetails } from "./models"
 import type { BackendAdapter, BackendRequest } from "../types"
 
 export type CodexAdapterOptions = {
@@ -78,6 +78,8 @@ export async function createCodexAdapter(options: CodexAdapterOptions): Promise<
       getVisibleModels,
       getAllModels,
       modelExists,
+      getContextLength,
+      getCapabilities,
       createModelDetails,
     },
   }

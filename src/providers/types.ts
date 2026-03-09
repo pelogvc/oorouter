@@ -43,7 +43,9 @@ export interface BackendModels {
   getVisibleModels(): readonly OllamaModelInfo[]
   getAllModels(): readonly OllamaModelInfo[]
   modelExists(name: string): boolean
+  getContextLength(name: string): number
   createModelDetails(): OllamaModelDetails
+  getCapabilities(name: string): readonly string[]
 }
 
 export interface BackendAdapter {

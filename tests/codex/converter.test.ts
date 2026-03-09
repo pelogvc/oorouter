@@ -12,8 +12,8 @@ import {
 describe("resolveModel", () => {
   test("resolves known aliases", () => {
     expect(resolveModel("codex")).toBe("gpt-5.3-codex")
-    expect(resolveModel("codex-mini")).toBe("gpt-5.1-codex-mini")
-    expect(resolveModel("gpt5")).toBe("gpt-5")
+    expect(resolveModel("spark")).toBe("gpt-5.3-codex-spark")
+    expect(resolveModel("gpt5")).toBe("gpt-5.4")
   })
 
   test("passes through unknown models", () => {
@@ -339,7 +339,7 @@ describe("openaiChatRequestToCodex", () => {
     expect(result.tools).toHaveLength(1)
     expect((result.tools[0] as { name: string }).name).toBe("test_fn")
     expect(result.parallel_tool_calls).toBe(true)
-    expect(result.include).toContain("usage")
+    expect(result.include).toEqual([])
   })
 
   test("creates request without tools", () => {
@@ -353,14 +353,14 @@ describe("openaiChatRequestToCodex", () => {
     expect(result.stream).toBe(false)
   })
 
-  test("passes temperature and max_tokens", () => {
+  test("strips unsupported parameters (temperature, max_tokens)", () => {
     const result = openaiChatRequestToCodex({
       model: "gpt-5",
       messages: [{ role: "user", content: "Hi" }],
       temperature: 0.7,
       max_tokens: 500,
     })
-    expect(result.temperature).toBe(0.7)
-    expect(result.max_output_tokens).toBe(500)
+    expect(result).not.toHaveProperty("temperature")
+    expect(result).not.toHaveProperty("max_output_tokens")
   })
 })

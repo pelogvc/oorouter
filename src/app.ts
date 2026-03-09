@@ -2,11 +2,13 @@ import Elysia from "elysia"
 import { cors } from "@elysiajs/cors"
 import type { BackendAdapter } from "./providers/types"
 import { healthPlugin } from "./plugins/health"
+import { loggerPlugin } from "./plugins/logger"
 import { createOllamaPlugin } from "./plugins/ollama"
 import { createOpenAIPlugin } from "./plugins/openai"
 
 export function createApp(adapter: BackendAdapter) {
   return new Elysia()
+    .use(loggerPlugin)
     .use(
       cors({
         origin: "*",
