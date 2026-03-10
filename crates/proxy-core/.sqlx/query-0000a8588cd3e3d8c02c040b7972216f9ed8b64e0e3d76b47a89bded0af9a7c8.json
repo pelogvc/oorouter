@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT \n                date(timestamp) as date,\n                model,\n                SUM(input_tokens) as input_tokens,\n                SUM(output_tokens) as output_tokens,\n                SUM(input_tokens + output_tokens) as total_tokens,\n                COUNT(*) as request_count\n            FROM token_usage\n            WHERE timestamp >= datetime('now', '-' || ? || ' days')\n            GROUP BY date(timestamp), model\n            ORDER BY date DESC, model\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "date",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "model",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "input_tokens",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "output_tokens",
+        "ordinal": 3,
+        "type_info": "Integer"
+      },
+      {
+        "name": "total_tokens",
+        "ordinal": 4,
+        "type_info": "Integer"
+      },
+      {
+        "name": "request_count",
+        "ordinal": 5,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "0000a8588cd3e3d8c02c040b7972216f9ed8b64e0e3d76b47a89bded0af9a7c8"
+}

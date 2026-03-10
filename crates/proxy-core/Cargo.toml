@@ -1,0 +1,45 @@
+[package]
+name = "proxy-core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "proxy_core"
+path = "src/lib.rs"
+
+
+[[bin]]
+name = "proxy-server"
+path = "src/bin/server.rs"
+
+[[example]]
+name = "spike_reqwest"
+path = "examples/spike_reqwest.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration/mod.rs"
+
+[dependencies]
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+sqlx = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+notify = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+chrono = { workspace = true }
+async-stream = { workspace = true }
+
+
+[dev-dependencies]
+tempfile = "3"

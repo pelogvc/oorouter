@@ -1,9 +1,45 @@
+# Dependencies
 node_modules/
+
+# Build artifacts
 dist/
-bun.lockb
+target/
+debug/
+
+# Rust
+**/*.rs.bk
+*.pdb
+*.d
+*.dylib
+*.so
+*.dll
+**/mutants.out*/
+
+# Tauri
+src/gen/
+
+# SQLite / SQLx
+*.sqlite
+*.sqlite-journal
+*.db
+*.db-journal
+.sqlx/
+
+# Environment
 .env
+
+# Logs
 *.log
+
+# OS
 .DS_Store
 
+# IDE / Editor
+.idea/
+*.swp
+*.swo
+
+# Agent / Tool
 .agents
 .claude
+.sisyphus
