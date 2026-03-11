@@ -1,4 +1,0 @@
-# Cargo configuration for macOS targets
-# Uncomment the target line if building for a specific architecture
-# [build]
-# target = "aarch64-apple-darwin"

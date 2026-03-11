@@ -16,7 +16,7 @@ debug/
 **/mutants.out*/
 
 # Tauri
-src/gen/
+src-tauri/gen/
 
 # SQLite / SQLx
 *.sqlite
@@ -43,3 +43,4 @@ src/gen/
 .agents
 .claude
 .sisyphus
+.skills_lock.json
