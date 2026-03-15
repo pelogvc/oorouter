@@ -281,13 +281,13 @@ pub async fn update_setting(
     if key == "auto_start" {
         let autolaunch = app_handle.autolaunch();
         if value == "true" {
-            autolaunch
-                .enable()
-                .map_err(|e| format!("autostart enable failed: {e}"))?;
+            if let Err(e) = autolaunch.enable() {
+                eprintln!("[autostart] enable failed (non-fatal): {e}");
+            }
         } else {
-            autolaunch
-                .disable()
-                .map_err(|e| format!("autostart disable failed: {e}"))?;
+            if let Err(e) = autolaunch.disable() {
+                eprintln!("[autostart] disable failed (non-fatal): {e}");
+            }
         }
     }
     Ok(())

@@ -1,10 +1,10 @@
 [package]
-name = "codex-ollama-proxy"
-version = "0.1.0"
+name = "oorouter"
+version = "0.0.0"
 edition = "2021"
 
 [lib]
-name = "codex_ollama_proxy_lib"
+name = "oorouter_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

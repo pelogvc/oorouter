@@ -29,7 +29,13 @@ pub async fn post_chat_completions(
         .as_ref()
         .and_then(|options| options.include_usage)
         .unwrap_or(false);
-    let ctx = OpenAIStreamContext::new(codex_req.model.clone(), include_usage);
+    let ctx = OpenAIStreamContext::new(
+        codex_req.model.clone(),
+        include_usage,
+        state.log_buffer.clone(),
+        state.db.clone(),
+        "/v1/chat/completions".to_string(),
+    );
 
     if body.stream != Some(true) {
         let start_time = Instant::now();
@@ -41,6 +47,10 @@ pub async fn post_chat_completions(
         let completion = collect_openai_response(upstream_response, &ctx)
             .await
             .map_err(map_proxy_error)?;
+        let input_tokens = completion["usage"]["prompt_tokens"].as_u64().map(|v| v as u32);
+        let output_tokens = completion["usage"]["completion_tokens"]
+            .as_u64()
+            .map(|v| v as u32);
 
         push_log(
             &state.log_buffer,
@@ -52,10 +62,21 @@ pub async fn post_chat_completions(
                 model: Some(codex_req.model.clone()),
                 status: 200,
                 duration_ms: start_time.elapsed().as_millis() as u64,
-                input_tokens: None,
-                output_tokens: None,
+                input_tokens,
+                output_tokens,
             },
         );
+        let prompt_tokens = completion["usage"]["prompt_tokens"].as_i64().unwrap_or(0);
+        let completion_tokens = completion["usage"]["completion_tokens"].as_i64().unwrap_or(0);
+        if prompt_tokens > 0 || completion_tokens > 0 {
+            let db = state.db.clone();
+            let model_name = codex_req.model.clone();
+            tokio::spawn(async move {
+                if let Err(e) = db.insert_token_usage(&model_name, "codex", prompt_tokens, completion_tokens, "/v1/chat/completions").await {
+                    eprintln!("[usage] insert failed: {e}");
+                }
+            });
+        }
         return Ok(Json(completion).into_response());
     }
 
@@ -84,7 +105,7 @@ pub async fn get_models() -> Json<OpenAIModelsResponse> {
             id: model.model.trim_end_matches(":latest").to_string(),
             object: "model".to_string(),
             created,
-            owned_by: "codex-proxy".to_string(),
+            owned_by: "oorouter".to_string(),
         })
         .collect();
 

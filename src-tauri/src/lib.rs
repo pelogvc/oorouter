@@ -43,8 +43,8 @@ fn create_proxy_state() -> Result<(Arc<proxy_core::routes::AppState>, u16, Strin
     ));
 
     let db_path = std::env::var("HOME")
-        .map(|h| std::path::PathBuf::from(h).join(".local/share/codex-ollama-proxy"))
-        .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/codex-ollama-proxy"))
+        .map(|h| std::path::PathBuf::from(h).join(".local/share/oorouter"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/oorouter"))
         .join("proxy.db");
 
     let db = tokio::runtime::Runtime::new()
@@ -194,19 +194,14 @@ pub fn run() {
                 ],
             )?;
 
-            let icon = app
-                .default_window_icon()
-                .cloned()
-                .unwrap_or_else(|| {
-                    tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))
-                        .expect("embedded tray icon must be valid PNG")
-                });
+            let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))
+                .expect("embedded tray icon must be valid PNG");
 
             let _tray = TrayIconBuilder::with_id("main-tray")
                 .icon(icon)
                 .menu(&menu)
                 .show_menu_on_left_click(false)
-                .tooltip("Codex Ollama Proxy")
+                .tooltip("oorouter")
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show_dashboard" => {
                         if let Some(w) = app.get_webview_window("main") {
@@ -214,13 +209,35 @@ pub fn run() {
                         }
                     }
                     "start_server" => {
-                        eprintln!("[tray] start_server requested");
+                        let app_handle = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let state = app_handle.state::<TauriAppState>();
+                            {
+                                let guard = state.server_handle.lock().unwrap();
+                                if guard.is_some() { return; }
+                            }
+                            let port = state.server_status.lock().unwrap().port;
+                            let handle = spawn_proxy_server(state.proxy_state.clone(), port);
+                            *state.server_handle.lock().unwrap() = Some(handle);
+                            let mut status = state.server_status.lock().unwrap();
+                            status.running = true;
+                            status.error = None;
+                        });
                     }
                     "stop_server" => {
-                        eprintln!("[tray] stop_server requested");
+                        let state = app.state::<TauriAppState>();
+                        {
+                            let mut guard = state.server_handle.lock().unwrap();
+                            if let Some(handle) = guard.take() {
+                                handle.abort();
+                            }
+                        }
+                        let mut status = state.server_status.lock().unwrap();
+                        status.running = false;
+                        status.uptime_secs = state.start_time.elapsed().as_secs();
                     }
                     "quit" => {
-                        app.exit(0);
+                        std::process::exit(0);
                     }
                     _ => {}
                 })
@@ -304,12 +321,20 @@ pub fn run() {
                 start_time: Instant::now(),
             });
 
-            spawn_log_event_bridge(app.app_handle().clone(), proxy_state);
+            spawn_log_event_bridge(app.app_handle().clone(), proxy_state.clone());
 
+            let auto_start_enabled = tokio::runtime::Runtime::new()
+                .ok()
+                .and_then(|rt| rt.block_on(proxy_state.db.get_setting("auto_start")).ok())
+                .flatten()
+                .map(|v| v != "false")
+                .unwrap_or(true);
 
-            // 자동시작 기본 ON
-            if let Err(e) = app.autolaunch().enable() {
-                eprintln!("[autostart] enable failed: {e}");
+            let autolaunch = app.autolaunch();
+            if auto_start_enabled {
+                let _ = autolaunch.enable();
+            } else {
+                let _ = autolaunch.disable();
             }
             Ok(())
         })

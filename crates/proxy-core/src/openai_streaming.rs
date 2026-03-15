@@ -16,10 +16,19 @@ pub struct OpenAIStreamContext {
     pub model: String,
     pub system_fingerprint: String,
     pub include_usage: bool,
+    pub log_buffer: crate::logger::LogBuffer,
+    pub db: std::sync::Arc<crate::db::Database>,
+    pub path: String,
 }
 
 impl OpenAIStreamContext {
-    pub fn new(model: String, include_usage: bool) -> Self {
+    pub fn new(
+        model: String,
+        include_usage: bool,
+        log_buffer: crate::logger::LogBuffer,
+        db: std::sync::Arc<crate::db::Database>,
+        path: String,
+    ) -> Self {
         let id = Uuid::new_v4().to_string().replace('-', "");
         OpenAIStreamContext {
             completion_id: format!("chatcmpl-{}", &id[..24]),
@@ -30,6 +39,9 @@ impl OpenAIStreamContext {
             model,
             system_fingerprint: format!("fp_{}", &id[..12]),
             include_usage,
+            log_buffer,
+            db,
+            path,
         }
     }
 }
@@ -251,6 +263,39 @@ pub fn create_openai_stream(
                     "response.completed" | "response.done" => {
                         if !done_sent {
                             done_sent = true;
+                            let (input_tokens, output_tokens) = if let CodexSSEEvent::Completed(ref e) = event {
+                                (
+                                    e.response.usage.as_ref().map(|u| u.input_tokens as u32),
+                                    e.response.usage.as_ref().map(|u| u.output_tokens as u32),
+                                )
+                            } else {
+                                (None, None)
+                            };
+                            crate::logger::push_log(&ctx.log_buffer, crate::logger::LogEntry {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                timestamp: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                                method: "POST".to_string(),
+                                path: ctx.path.clone(),
+                                model: Some(ctx.model.clone()),
+                                status: 200,
+                                duration_ms: 0,
+                                input_tokens,
+                                output_tokens,
+                            });
+                            if let CodexSSEEvent::Completed(ref e) = event {
+                                if let Some(ref usage) = e.response.usage {
+                                    let db = ctx.db.clone();
+                                    let model = ctx.model.clone();
+                                    let path = ctx.path.clone();
+                                    let input = usage.input_tokens as i64;
+                                    let output = usage.output_tokens as i64;
+                                    tokio::spawn(async move {
+                                        if let Err(e) = db.insert_token_usage(&model, "codex", input, output, &path).await {
+                                            eprintln!("[usage] openai stream insert failed: {e}");
+                                        }
+                                    });
+                                }
+                            }
                             let has_tool_calls = !tool_calls_by_output_index.is_empty();
                             let finish_reason = if has_tool_calls { "tool_calls" } else { "stop" };
 
@@ -482,9 +527,22 @@ mod tests {
         reqwest::get(format!("http://{}", addr)).await.unwrap()
     }
 
-    #[test]
-    fn test_context_creation() {
-        let ctx = OpenAIStreamContext::new("gpt-5.3-codex".to_string(), false);
+    #[tokio::test]
+    async fn test_context_creation() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = std::sync::Arc::new(
+            crate::db::Database::new(&dir.path().join("test.db"))
+                .await
+                .unwrap(),
+        );
+        let log_buffer = crate::logger::new_log_buffer();
+        let ctx = OpenAIStreamContext::new(
+            "gpt-5.3-codex".to_string(),
+            false,
+            log_buffer,
+            db,
+            "/v1/chat/completions".to_string(),
+        );
         assert!(ctx.completion_id.starts_with("chatcmpl-"));
         assert!(ctx.system_fingerprint.starts_with("fp_"));
         assert_eq!(ctx.model, "gpt-5.3-codex");
@@ -514,9 +572,22 @@ mod tests {
         assert_eq!(usage.total_tokens, 30);
     }
 
-    #[test]
-    fn test_build_chunk() {
-        let ctx = OpenAIStreamContext::new("gpt-5.3-codex".to_string(), false);
+    #[tokio::test]
+    async fn test_build_chunk() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = std::sync::Arc::new(
+            crate::db::Database::new(&dir.path().join("test.db"))
+                .await
+                .unwrap(),
+        );
+        let log_buffer = crate::logger::new_log_buffer();
+        let ctx = OpenAIStreamContext::new(
+            "gpt-5.3-codex".to_string(),
+            false,
+            log_buffer,
+            db,
+            "/v1/chat/completions".to_string(),
+        );
         let chunk = build_chunk(
             &ctx,
             vec![OpenAIChoice {
@@ -550,7 +621,20 @@ mod tests {
             "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r1\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5,\"total_tokens\":15}}}\n\n"
         );
         let response = mock_sse_response(sse_body).await;
-        let ctx = OpenAIStreamContext::new("test-model".to_string(), true);
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = std::sync::Arc::new(
+            crate::db::Database::new(&dir.path().join("test.db"))
+                .await
+                .unwrap(),
+        );
+        let log_buffer = crate::logger::new_log_buffer();
+        let ctx = OpenAIStreamContext::new(
+            "test-model".to_string(),
+            true,
+            log_buffer,
+            db,
+            "/v1/chat/completions".to_string(),
+        );
         let chunks: Vec<std::result::Result<Bytes, ProxyError>> =
             create_openai_stream(ctx, response).collect().await;
 
@@ -578,7 +662,20 @@ mod tests {
             "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r1\"}}\n\n"
         );
         let response = mock_sse_response(sse_body).await;
-        let ctx = OpenAIStreamContext::new("test-model".to_string(), false);
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = std::sync::Arc::new(
+            crate::db::Database::new(&dir.path().join("test.db"))
+                .await
+                .unwrap(),
+        );
+        let log_buffer = crate::logger::new_log_buffer();
+        let ctx = OpenAIStreamContext::new(
+            "test-model".to_string(),
+            false,
+            log_buffer,
+            db,
+            "/v1/chat/completions".to_string(),
+        );
         let chunks: Vec<std::result::Result<Bytes, ProxyError>> =
             create_openai_stream(ctx, response).collect().await;
 
@@ -604,7 +701,20 @@ mod tests {
             "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r1\",\"usage\":{\"input_tokens\":5,\"output_tokens\":8,\"total_tokens\":13}}}\n\n"
         );
         let response = mock_sse_response(sse_body).await;
-        let ctx = OpenAIStreamContext::new("gpt-5".to_string(), false);
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = std::sync::Arc::new(
+            crate::db::Database::new(&dir.path().join("test.db"))
+                .await
+                .unwrap(),
+        );
+        let log_buffer = crate::logger::new_log_buffer();
+        let ctx = OpenAIStreamContext::new(
+            "gpt-5".to_string(),
+            false,
+            log_buffer,
+            db,
+            "/v1/chat/completions".to_string(),
+        );
         let result = collect_openai_response(response, &ctx).await.unwrap();
 
         assert_eq!(result["choices"][0]["finish_reason"], "tool_calls");
@@ -624,7 +734,20 @@ mod tests {
             "data: {\"type\":\"response.done\",\"response\":{\"id\":\"r1\"}}\n\n"
         );
         let response = mock_sse_response(sse_body).await;
-        let ctx = OpenAIStreamContext::new("test-model".to_string(), false);
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = std::sync::Arc::new(
+            crate::db::Database::new(&dir.path().join("test.db"))
+                .await
+                .unwrap(),
+        );
+        let log_buffer = crate::logger::new_log_buffer();
+        let ctx = OpenAIStreamContext::new(
+            "test-model".to_string(),
+            false,
+            log_buffer,
+            db,
+            "/v1/chat/completions".to_string(),
+        );
         let chunks: Vec<std::result::Result<Bytes, ProxyError>> =
             create_openai_stream(ctx, response).collect().await;
 

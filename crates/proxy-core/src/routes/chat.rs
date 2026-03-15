@@ -32,7 +32,7 @@ pub async fn handle_chat(
             .send_request(&codex_req)
             .await
             .map_err(map_proxy_error)?;
-        let text = collect_sse_response(upstream_response)
+        let collected = collect_sse_response(upstream_response)
             .await
             .map_err(map_proxy_error)?;
 
@@ -47,16 +47,27 @@ pub async fn handle_chat(
                 model: Some(model.clone()),
                 status: 200,
                 duration_ms: total_ns / 1_000_000,
-                input_tokens: None,
-                output_tokens: None,
+                input_tokens: collected.usage.as_ref().map(|u| u.input_tokens as u32),
+                output_tokens: collected.usage.as_ref().map(|u| u.output_tokens as u32),
             },
         );
+        if let Some(ref usage) = collected.usage {
+            let db = state.db.clone();
+            let model = model.clone();
+            let input = usage.input_tokens as i64;
+            let output = usage.output_tokens as i64;
+            tokio::spawn(async move {
+                if let Err(e) = db.insert_token_usage(&model, "codex", input, output, "/api/chat").await {
+                    eprintln!("[usage] insert failed: {e}");
+                }
+            });
+        }
         let response = OllamaChatResponse {
             model,
             created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
             message: OllamaChatMessage {
                 role: "assistant".to_string(),
-                content: text,
+                content: collected.text,
                 images: None,
             },
             done: true,
@@ -77,7 +88,15 @@ pub async fn handle_chat(
         .send_request(&codex_req)
         .await
         .map_err(map_proxy_error)?;
-    let stream = create_chat_stream(StreamContext::new(model), upstream_response);
+    let stream = create_chat_stream(
+        StreamContext::new(
+            model,
+            state.log_buffer.clone(),
+            state.db.clone(),
+            "/api/chat".to_string(),
+        ),
+        upstream_response,
+    );
 
     let mut headers = HeaderMap::new();
     headers.insert("Content-Type", HeaderValue::from_static("application/x-ndjson"));

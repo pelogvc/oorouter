@@ -57,7 +57,7 @@ export async function getTokenUsage(days: number = 7) {
 
 export async function getModels() {
   return invoke<Array<{
-    slug: string;
+    id: string;
     name: string;
     visible: boolean;
     context_length: number;

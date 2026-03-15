@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to attach DMG to (e.g. v1.0.1). Leave empty for semantic-release."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: bun install
+
+      - run: bun run build
+
+      - id: semantic
+        if: inputs.tag == ''
+        run: npx semantic-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: resolve-tag
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.semantic.outputs.new_release_published }}" = "true" ]; then
+            echo "tag=v${{ steps.semantic.outputs.new_release_version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.resolve-tag.outputs.tag != ''
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ steps.resolve-tag.outputs.tag }}
+          releaseName: oorouter ${{ steps.resolve-tag.outputs.tag }}
+          releaseBody: See CHANGELOG.md for details.
+          releaseDraft: false
+          prerelease: false
+          args: --target aarch64-apple-darwin

@@ -1,8 +1,19 @@
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { useTheme, type Theme } from "@/lib/use-theme";
 import { getServerStatus } from "@/lib/tauri";
 import { Badge } from "@/components/ui/badge";
-import { Home, ScrollText, Cpu, Settings, BarChart3 } from "lucide-react";
+import {
+  Home,
+  ScrollText,
+  Cpu,
+  Settings,
+  BarChart3,
+  Sun,
+  Moon,
+  Monitor,
+  Circle,
+} from "lucide-react";
 
 export type Tab = "home" | "logs" | "models" | "settings" | "usage";
 
@@ -12,7 +23,22 @@ interface LayoutProps {
   children: React.ReactNode;
 }
 
+const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
+  { id: "home", label: "Dashboard", icon: Home },
+  { id: "logs", label: "Logs", icon: ScrollText },
+  { id: "models", label: "Models", icon: Cpu },
+  { id: "usage", label: "Usage", icon: BarChart3 },
+  { id: "settings", label: "Settings", icon: Settings },
+];
+
+const THEME_OPTIONS: { value: Theme; icon: React.ElementType }[] = [
+  { value: "light", icon: Sun },
+  { value: "dark", icon: Moon },
+  { value: "system", icon: Monitor },
+];
+
 export function Layout({ activeTab, onTabChange, children }: LayoutProps) {
+  const { theme, setTheme } = useTheme();
   const [status, setStatus] = useState<{ running: boolean; error?: string }>({
     running: false,
   });
@@ -22,9 +48,8 @@ export function Layout({ activeTab, onTabChange, children }: LayoutProps) {
       try {
         const res = await getServerStatus();
         setStatus({ running: res.running, error: res.error });
-      } catch (err) {
-        console.error("Failed to get server status:", err);
-        setStatus({ running: false, error: String(err) });
+      } catch {
+        setStatus({ running: false });
       }
     };
 
@@ -33,72 +58,105 @@ export function Layout({ activeTab, onTabChange, children }: LayoutProps) {
     return () => clearInterval(interval);
   }, []);
 
-  const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
-    { id: "home", label: "Home", icon: Home },
-    { id: "logs", label: "Logs", icon: ScrollText },
-    { id: "models", label: "Models", icon: Cpu },
-    { id: "usage", label: "Token Usage", icon: BarChart3 },
-    { id: "settings", label: "Settings", icon: Settings },
-  ];
-
   return (
-    <div className="flex h-screen w-full bg-background text-foreground overflow-hidden rounded-lg border shadow-lg">
-
-      <nav className="w-40 border-r bg-muted/30 flex flex-col">
-        <div className="p-4 pb-2">
-          <h1 className="font-semibold text-sm tracking-tight">Codex Proxy</h1>
+    <div className="flex h-screen w-full overflow-hidden bg-background text-foreground">
+      <nav className="w-52 shrink-0 border-r flex flex-col bg-card/50">
+        <div className="h-12 flex items-center gap-2 px-4 border-b">
+          <svg
+            viewBox="37 50 175 150"
+            className="w-5 h-5 shrink-0 text-foreground"
+            fill="currentColor"
+          >
+            <path d="m175.1 87.7c-14.9 0-24.92 5.38-44.96 25.99l-12.16 13.47c-15.92 17.95-26.71 26.02-42.31 26.02-14.9 0-26.99-12.46-26.99-27.45 0-15.35 12.09-27.9 27.19-27.9 11.89 0 19.54 5.89 28.31 17.03 2.69 3.5 9 0.2 7.94-4.66-8.36-12.46-18.38-22.69-35.2-22.69-21.22 0-39.17 17.57-39.17 37.92 0 20.75 15.92 38.32 37.25 38.32h1.06c16.27 0 27.16-8.57 48-30.84l4.84-5.28c17.37-19.41 29.06-29.99 45.33-29.99 15.1 0 27.39 12.65 27.39 27.9 0 14.7-11.9 27.64-27.6 27.64-11.32 0-19.27-5.47-27.42-16.81-3.48-3.56-10.19-0.1-8.74 5.28 9.54 13.34 19.37 22.2 36.16 22.2h1.06c21.03 0 36.53-18.93 36.53-38.14-0.77-19.7-16.69-38.01-36.51-38.01z" />
+          </svg>
+          <span className="font-semibold text-sm tracking-tight">
+            oorouter
+          </span>
         </div>
-        
-        <div className="flex-1 px-2 py-2 space-y-1 overflow-y-auto">
-          {tabs.map((tab) => {
+
+        <div className="flex-1 p-2 space-y-0.5 overflow-y-auto">
+          {TABS.map((tab) => {
             const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
                 onClick={() => onTabChange(tab.id)}
                 className={cn(
-                  "w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors",
-                  activeTab === tab.id
-                    ? "bg-primary text-primary-foreground shadow-sm"
+                  "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors duration-150 cursor-pointer",
+                  isActive
+                    ? "bg-primary/10 text-primary"
                     : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                 )}
               >
-                <Icon className="w-4 h-4" />
+                <Icon className="w-4 h-4 shrink-0" />
                 {tab.label}
               </button>
             );
           })}
         </div>
-      </nav>
 
+        <div className="border-t p-3 space-y-3">
+          <div className="flex items-center gap-0.5 bg-muted rounded-lg p-0.5">
+            {THEME_OPTIONS.map(({ value, icon: Icon }) => (
+              <button
+                key={value}
+                onClick={() => setTheme(value)}
+                className={cn(
+                  "flex-1 flex items-center justify-center py-1.5 rounded-md transition-colors duration-150 cursor-pointer",
+                  theme === value
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <Icon className="w-3.5 h-3.5" />
+              </button>
+            ))}
+          </div>
 
-      <div className="flex-1 flex flex-col min-w-0">
-
-        <header className="h-12 border-b flex items-center justify-between px-4 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium capitalize">
-              {tabs.find((t) => t.id === activeTab)?.label}
+          <div className="flex items-center gap-2 px-1">
+            <Circle
+              className={cn(
+                "w-2 h-2 fill-current shrink-0",
+                status.running
+                  ? "text-emerald-500"
+                  : "text-muted-foreground/40"
+              )}
+            />
+            <span className="text-[11px] text-muted-foreground truncate">
+              {status.running ? "Server running" : "Server stopped"}
             </span>
           </div>
-          <div className="flex items-center gap-2">
-            <Badge
-              variant={status.running ? "default" : "secondary"}
+        </div>
+      </nav>
+
+      <div className="flex-1 flex flex-col min-w-0">
+        <header className="h-12 shrink-0 border-b flex items-center justify-between px-5 bg-background">
+          <h2 className="text-sm font-semibold">
+            {TABS.find((t) => t.id === activeTab)?.label}
+          </h2>
+          <Badge
+            variant="outline"
+            className={cn(
+              "h-5 px-2 text-[10px] uppercase tracking-wider font-medium",
+              status.running
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                : ""
+            )}
+          >
+            <Circle
               className={cn(
-                "h-5 px-2 text-[10px] uppercase tracking-wider",
+                "w-1.5 h-1.5 mr-1.5 fill-current",
                 status.running
-                  ? "bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/25 border-emerald-500/20"
-                  : "bg-muted text-muted-foreground"
+                  ? "text-emerald-500"
+                  : "text-muted-foreground/40"
               )}
-            >
-              {status.running ? "Running" : "Stopped"}
-            </Badge>
-          </div>
+            />
+            {status.running ? "Online" : "Offline"}
+          </Badge>
         </header>
 
-
-        <main className="flex-1 overflow-auto bg-background">
-          {children}
-        </main>
+        <main className="flex-1 overflow-auto">{children}</main>
       </div>
     </div>
   );

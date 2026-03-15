@@ -43,4 +43,4 @@ src-tauri/gen/
 .agents
 .claude
 .sisyphus
-.skills_lock.json
+skills-lock.json

@@ -18,8 +18,8 @@ async fn main() -> anyhow::Result<()> {
     let client = Arc::new(CodexClient::new(auth, config.chatgpt_api_url.clone()));
 
     let db_path = std::env::var("HOME")
-        .map(|h| std::path::PathBuf::from(h).join(".local/share/codex-ollama-proxy"))
-        .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/codex-ollama-proxy"))
+        .map(|h| std::path::PathBuf::from(h).join(".local/share/oorouter"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/oorouter"))
         .join("proxy.db");
     let db = Database::new(&db_path).await?;
 

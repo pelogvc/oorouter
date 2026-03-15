@@ -1,7 +1,7 @@
 {
-  "productName": "Codex Ollama Proxy",
-  "version": "0.1.0",
-  "identifier": "com.codex-ollama-proxy.app",
+  "productName": "oorouter",
+  "version": "0.0.0",
+  "identifier": "com.oorouter.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420"
@@ -12,8 +12,8 @@
     "windows": [
       {
         "label": "main",
-        "title": "Codex Ollama Proxy",
-        "width": 380,
+        "title": "oorouter",
+        "width": 720,
         "height": 520,
         "decorations": false,
         "transparent": true,

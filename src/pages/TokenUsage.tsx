@@ -1,8 +1,17 @@
 import { useEffect, useState } from "react";
 import { getTokenUsage } from "@/lib/tauri";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Coins } from "lucide-react";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { ArrowDownToLine, ArrowUpFromLine, Hash, BarChart3 } from "lucide-react";
 
 interface TokenUsageRow {
   date: string;
@@ -12,6 +21,9 @@ interface TokenUsageRow {
   total_tokens: number;
   request_count: number;
 }
+
+const PERIOD_OPTIONS = [7, 14, 30] as const;
+
 export default function TokenUsage() {
   const [rows, setRows] = useState<TokenUsageRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -23,11 +35,8 @@ export default function TokenUsage() {
       try {
         const data = await getTokenUsage(days);
         setRows(data);
-      } catch {
-        // running outside Tauri
-      } finally {
-        setLoading(false);
-      }
+      } catch {}
+      setLoading(false);
     })();
   }, [days]);
 
@@ -35,79 +44,128 @@ export default function TokenUsage() {
   const totalOutput = rows.reduce((s, r) => s + r.output_tokens, 0);
   const totalRequests = rows.reduce((s, r) => s + r.request_count, 0);
 
+  const stats = [
+    { label: "Input Tokens", value: totalInput, icon: ArrowDownToLine, color: "text-blue-500" },
+    { label: "Output Tokens", value: totalOutput, icon: ArrowUpFromLine, color: "text-emerald-500" },
+    { label: "Requests", value: totalRequests, icon: Hash, color: "text-amber-500 dark:text-amber-400" },
+  ];
+
   return (
-    <div className="p-4 space-y-4">
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Coins className="w-5 h-5" />
-              Token Usage
-            </CardTitle>
-            <div className="flex gap-1">
-              {[7, 14, 30].map((d) => (
-                <button
-                  key={d}
-                  onClick={() => setDays(d)}
-                  className={`px-2 py-0.5 text-xs rounded border transition-colors ${days === d ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted"}`}
-                >
-                  {d}d
-                </button>
-              ))}
-            </div>
+    <div className="p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold flex items-center gap-2 text-foreground">
+          <BarChart3 className="w-5 h-5" />
+          Token Usage
+        </h2>
+        <div className="flex items-center gap-0.5 bg-muted rounded-lg p-0.5">
+          {PERIOD_OPTIONS.map((d) => (
+            <button
+              key={d}
+              onClick={() => setDays(d)}
+              className={cn(
+                "px-3 py-1.5 text-xs font-medium rounded-md transition-colors duration-150 cursor-pointer",
+                days === d
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {d}d
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {loading ? (
+        <>
+          <div className="grid grid-cols-3 gap-4">
+            {[1, 2, 3].map((i) => (
+              <Card key={i} className="shadow-sm">
+                <CardContent className="p-4 space-y-2">
+                  <div className="h-4 w-20 bg-muted rounded animate-pulse" />
+                  <div className="h-8 w-28 bg-muted rounded animate-pulse" />
+                </CardContent>
+              </Card>
+            ))}
           </div>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <p className="text-sm text-muted-foreground">Loading...</p>
-          ) : rows.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No usage data for this period.</p>
-          ) : (
-            <div className="space-y-4">
-              <div className="grid grid-cols-3 gap-3 text-center">
-                <div className="rounded-lg border p-2">
-                  <p className="text-xs text-muted-foreground">Input</p>
-                  <p className="text-sm font-semibold">{totalInput.toLocaleString()}</p>
-                </div>
-                <div className="rounded-lg border p-2">
-                  <p className="text-xs text-muted-foreground">Output</p>
-                  <p className="text-sm font-semibold">{totalOutput.toLocaleString()}</p>
-                </div>
-                <div className="rounded-lg border p-2">
-                  <p className="text-xs text-muted-foreground">Requests</p>
-                  <p className="text-sm font-semibold">{totalRequests.toLocaleString()}</p>
-                </div>
-              </div>
-              <div className="overflow-auto max-h-64">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b text-muted-foreground">
-                      <th className="text-left py-1 pr-2">Date</th>
-                      <th className="text-left py-1 pr-2">Model</th>
-                      <th className="text-right py-1 pr-2">Input</th>
-                      <th className="text-right py-1 pr-2">Output</th>
-                      <th className="text-right py-1">Reqs</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row, i) => (
-                      <tr key={i} className="border-b last:border-0 hover:bg-muted/50">
-                        <td className="py-1 pr-2 font-mono">{row.date}</td>
-                        <td className="py-1 pr-2">
-                          <Badge variant="outline" className="text-xs font-mono">{row.model}</Badge>
-                        </td>
-                        <td className="py-1 pr-2 text-right">{row.input_tokens.toLocaleString()}</td>
-                        <td className="py-1 pr-2 text-right">{row.output_tokens.toLocaleString()}</td>
-                        <td className="py-1 text-right">{row.request_count}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+          <Card className="shadow-sm">
+            <CardContent className="p-4 space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-8 bg-muted rounded animate-pulse" />
+              ))}
+            </CardContent>
+          </Card>
+        </>
+      ) : rows.length === 0 ? (
+        <Card className="shadow-sm">
+          <CardContent className="py-16 flex flex-col items-center gap-3 text-center">
+            <BarChart3 className="w-10 h-10 text-muted-foreground/30" />
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-muted-foreground">No usage data</p>
+              <p className="text-xs text-muted-foreground/70">No token usage recorded in the last {days} days</p>
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          <div className="grid grid-cols-3 gap-4">
+            {stats.map((stat) => {
+              const Icon = stat.icon;
+              return (
+                <Card key={stat.label} className="shadow-sm">
+                  <CardContent className="p-4 flex flex-col gap-1.5">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Icon className={cn("w-4 h-4", stat.color)} />
+                      {stat.label}
+                    </div>
+                    <div className="text-2xl font-semibold font-mono text-foreground">
+                      {stat.value.toLocaleString()}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+
+          <Card className="shadow-sm">
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Model</TableHead>
+                    <TableHead className="text-right">Input</TableHead>
+                    <TableHead className="text-right">Output</TableHead>
+                    <TableHead className="text-right">Requests</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((row, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {row.date}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="font-mono text-xs">
+                          {row.model}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs">
+                        {row.input_tokens.toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs">
+                        {row.output_tokens.toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs">
+                        {row.request_count}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </>
+      )}
     </div>
   );
 }

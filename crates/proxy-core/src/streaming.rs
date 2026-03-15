@@ -1,7 +1,10 @@
 use bytes::Bytes;
 use futures::Stream;
+use std::sync::Arc;
 
+use crate::db::Database;
 use crate::error::{ProxyError, Result};
+use crate::logger::LogBuffer;
 use crate::types::codex::CodexSSEEvent;
 
 pub fn parse_sse_line(line: &str) -> Option<CodexSSEEvent> {
@@ -37,13 +40,24 @@ fn create_final_metrics(start_time: std::time::Instant) -> serde_json::Value {
 pub struct StreamContext {
     pub model: String,
     pub start_time: std::time::Instant,
+    pub log_buffer: LogBuffer,
+    pub db: Arc<Database>,
+    pub path: String,
+}
+
+pub struct CollectedResponse {
+    pub text: String,
+    pub usage: Option<crate::types::codex::CodexSSEResponseUsage>,
 }
 
 impl StreamContext {
-    pub fn new(model: String) -> Self {
+    pub fn new(model: String, log_buffer: LogBuffer, db: Arc<Database>, path: String) -> Self {
         StreamContext {
             model,
             start_time: std::time::Instant::now(),
+            log_buffer,
+            db,
+            path,
         }
     }
 }
@@ -93,6 +107,39 @@ pub fn create_chat_stream(
                     "response.completed" | "response.done" => {
                         if !done_sent {
                             done_sent = true;
+                            let (input_tokens, output_tokens) = if let CodexSSEEvent::Completed(ref e) = event {
+                                (
+                                    e.response.usage.as_ref().map(|u| u.input_tokens as u32),
+                                    e.response.usage.as_ref().map(|u| u.output_tokens as u32),
+                                )
+                            } else {
+                                (None, None)
+                            };
+                            crate::logger::push_log(&ctx.log_buffer, crate::logger::LogEntry {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                timestamp: create_timestamp(),
+                                method: "POST".to_string(),
+                                path: ctx.path.clone(),
+                                model: Some(ctx.model.clone()),
+                                status: 200,
+                                duration_ms: ctx.start_time.elapsed().as_millis() as u64,
+                                input_tokens,
+                                output_tokens,
+                            });
+                            if let CodexSSEEvent::Completed(ref e) = event {
+                                if let Some(ref usage) = e.response.usage {
+                                    let db = ctx.db.clone();
+                                    let model = ctx.model.clone();
+                                    let path = ctx.path.clone();
+                                    let input = usage.input_tokens as i64;
+                                    let output = usage.output_tokens as i64;
+                                    tokio::spawn(async move {
+                                        if let Err(e) = db.insert_token_usage(&model, "codex", input, output, &path).await {
+                                            eprintln!("[usage] stream insert failed: {e}");
+                                        }
+                                    });
+                                }
+                            }
                             let metrics = create_final_metrics(ctx.start_time);
                             let mut final_json = serde_json::json!({
                                 "model": ctx.model,
@@ -188,6 +235,39 @@ pub fn create_generate_stream(
                     "response.completed" | "response.done" => {
                         if !done_sent {
                             done_sent = true;
+                            let (input_tokens, output_tokens) = if let CodexSSEEvent::Completed(ref e) = event {
+                                (
+                                    e.response.usage.as_ref().map(|u| u.input_tokens as u32),
+                                    e.response.usage.as_ref().map(|u| u.output_tokens as u32),
+                                )
+                            } else {
+                                (None, None)
+                            };
+                            crate::logger::push_log(&ctx.log_buffer, crate::logger::LogEntry {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                timestamp: create_timestamp(),
+                                method: "POST".to_string(),
+                                path: ctx.path.clone(),
+                                model: Some(ctx.model.clone()),
+                                status: 200,
+                                duration_ms: ctx.start_time.elapsed().as_millis() as u64,
+                                input_tokens,
+                                output_tokens,
+                            });
+                            if let CodexSSEEvent::Completed(ref e) = event {
+                                if let Some(ref usage) = e.response.usage {
+                                    let db = ctx.db.clone();
+                                    let model = ctx.model.clone();
+                                    let path = ctx.path.clone();
+                                    let input = usage.input_tokens as i64;
+                                    let output = usage.output_tokens as i64;
+                                    tokio::spawn(async move {
+                                        if let Err(e) = db.insert_token_usage(&model, "codex", input, output, &path).await {
+                                            eprintln!("[usage] stream insert failed: {e}");
+                                        }
+                                    });
+                                }
+                            }
                             let metrics = create_final_metrics(ctx.start_time);
                             let mut final_json = serde_json::json!({
                                 "model": ctx.model,
@@ -222,12 +302,13 @@ pub fn create_generate_stream(
     }
 }
 
-pub async fn collect_sse_response(response: reqwest::Response) -> Result<String> {
+pub async fn collect_sse_response(response: reqwest::Response) -> Result<CollectedResponse> {
     use futures::StreamExt;
 
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
     let mut full_text = String::new();
+    let mut collected_usage = None;
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(ProxyError::HttpError)?;
@@ -262,6 +343,11 @@ pub async fn collect_sse_response(response: reqwest::Response) -> Result<String>
                         }
                     }
                 }
+                "response.completed" | "response.done" => {
+                    if let CodexSSEEvent::Completed(e) = &event {
+                        collected_usage = e.response.usage.clone();
+                    }
+                }
                 "response.failed" => {
                     if let CodexSSEEvent::Failed(e) = &event {
                         return Err(ProxyError::BackendApiError(e.response.error.message.clone()));
@@ -274,7 +360,10 @@ pub async fn collect_sse_response(response: reqwest::Response) -> Result<String>
         buffer = last;
     }
 
-    Ok(full_text)
+    Ok(CollectedResponse {
+        text: full_text,
+        usage: collected_usage,
+    })
 }
 
 #[cfg(test)]
@@ -343,7 +432,14 @@ mod tests {
             "data: {\"type\":\"response.done\",\"response\":{\"id\":\"r1\"}}\n\n"
         );
         let response = mock_sse_response(sse_body).await;
-        let ctx = StreamContext::new("gpt-5".to_string());
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = std::sync::Arc::new(
+            crate::db::Database::new(&dir.path().join("test.db"))
+                .await
+                .unwrap(),
+        );
+        let log_buffer = crate::logger::new_log_buffer();
+        let ctx = StreamContext::new("gpt-5".to_string(), log_buffer, db, "/api/chat".to_string());
         let chunks: Vec<std::result::Result<Bytes, ProxyError>> =
             create_chat_stream(ctx, response).collect().await;
 
@@ -364,7 +460,14 @@ mod tests {
             "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"rate_limit\",\"message\":\"Rate limit exceeded\"}}}\n\n"
         );
         let response = mock_sse_response(sse_body).await;
-        let ctx = StreamContext::new("gpt-5".to_string());
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = std::sync::Arc::new(
+            crate::db::Database::new(&dir.path().join("test.db"))
+                .await
+                .unwrap(),
+        );
+        let log_buffer = crate::logger::new_log_buffer();
+        let ctx = StreamContext::new("gpt-5".to_string(), log_buffer, db, "/api/chat".to_string());
         let chunks: Vec<std::result::Result<Bytes, ProxyError>> =
             create_chat_stream(ctx, response).collect().await;
 
@@ -382,7 +485,14 @@ mod tests {
             "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r1\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n"
         );
         let response = mock_sse_response(sse_body).await;
-        let ctx = StreamContext::new("gpt-5".to_string());
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = std::sync::Arc::new(
+            crate::db::Database::new(&dir.path().join("test.db"))
+                .await
+                .unwrap(),
+        );
+        let log_buffer = crate::logger::new_log_buffer();
+        let ctx = StreamContext::new("gpt-5".to_string(), log_buffer, db, "/api/chat".to_string());
         let chunks: Vec<std::result::Result<Bytes, ProxyError>> =
             create_generate_stream(ctx, response).collect().await;
 
@@ -395,5 +505,28 @@ mod tests {
             serde_json::from_slice(&chunks[1].as_ref().unwrap()).unwrap();
         assert_eq!(second["done"], true);
         assert_eq!(second["context"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn test_collect_sse_response_returns_usage() {
+        let sse_body = concat!(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r1\",\"usage\":{\"input_tokens\":42,\"output_tokens\":17,\"total_tokens\":59}}}\n\n"
+        );
+        let response = mock_sse_response(sse_body).await;
+        let result = collect_sse_response(response).await.unwrap();
+        assert_eq!(result.text, "hello");
+        let usage = result.usage.unwrap();
+        assert_eq!(usage.input_tokens, 42);
+        assert_eq!(usage.output_tokens, 17);
+    }
+
+    #[tokio::test]
+    async fn test_collect_sse_response_no_usage() {
+        let sse_body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n";
+        let response = mock_sse_response(sse_body).await;
+        let result = collect_sse_response(response).await.unwrap();
+        assert_eq!(result.text, "hi");
+        assert!(result.usage.is_none());
     }
 }
