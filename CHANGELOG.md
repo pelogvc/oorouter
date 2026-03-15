@@ -10,6 +10,21 @@
 ### Features
 
 * ollama proxy ([cd11102](https://github.com/pelogvc/oorouter/commit/cd11102017a2ce43b113819b197409601fc7369c))
+* oorouter ([ea5d81d](https://github.com/pelogvc/oorouter/commit/ea5d81d7cdecc38058c266effdf41fe995d95f59))
+* tauri 전환 ([1f8be67](https://github.com/pelogvc/oorouter/commit/1f8be6754cfaf09cac576599b9e147572816f003))
+
+# 1.0.0 (2026-03-15)
+
+
+### Bug Fixes
+
+* folder structure ([316d087](https://github.com/pelogvc/oorouter/commit/316d0873c91ad3ac558bd8bed58aa3d2328145f8))
+* input image ([2705eef](https://github.com/pelogvc/oorouter/commit/2705eef623893baaac9abc59376231050a79c194))
+
+
+### Features
+
+* ollama proxy ([cd11102](https://github.com/pelogvc/oorouter/commit/cd11102017a2ce43b113819b197409601fc7369c))
 * oorouter ([2349369](https://github.com/pelogvc/oorouter/commit/23493697c622252ede21bdb78cccddc1f046d49c))
 * tauri 전환 ([1f8be67](https://github.com/pelogvc/oorouter/commit/1f8be6754cfaf09cac576599b9e147572816f003))
 
