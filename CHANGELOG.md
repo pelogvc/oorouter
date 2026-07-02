@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/pelogvc/oorouter/compare/v1.0.0...v1.1.0) (2026-07-02)
+
+
+### Features
+
+* improve proxy runtime controls ([166c36a](https://github.com/pelogvc/oorouter/commit/166c36a3e8d3ddd710cb67de8ba65f09a7adb173))
+
 # 1.0.0 (2026-03-15)
 
 
