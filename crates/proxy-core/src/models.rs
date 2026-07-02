@@ -1,7 +1,7 @@
 // Model registry and alias resolution
 // Ported from: src/providers/codex/models.ts
 
-use crate::types::ollama::{OllamaModelInfo, OllamaModelDetails};
+use crate::types::ollama::{OllamaModelDetails, OllamaModelInfo};
 use chrono::{SecondsFormat, Utc};
 
 #[derive(Debug, Clone)]
@@ -14,6 +14,13 @@ pub struct ModelDefinition {
 }
 
 const AVAILABLE_MODELS: &[ModelDefinition] = &[
+    ModelDefinition {
+        slug: "gpt-5.5",
+        name: "gpt-5.5",
+        visible: true,
+        context_length: 1_050_000,
+        supports_vision: true,
+    },
     ModelDefinition {
         slug: "gpt-5.4",
         name: "gpt-5.4",
@@ -110,10 +117,7 @@ pub fn get_visible_models() -> Vec<OllamaModelInfo> {
 }
 
 pub fn get_all_models() -> Vec<OllamaModelInfo> {
-    AVAILABLE_MODELS
-        .iter()
-        .map(to_ollama_model_info)
-        .collect()
+    AVAILABLE_MODELS.iter().map(to_ollama_model_info).collect()
 }
 
 pub fn model_exists(name: &str) -> bool {
@@ -151,17 +155,18 @@ mod tests {
 
     #[test]
     fn test_available_models_count() {
-        assert_eq!(AVAILABLE_MODELS.len(), 9);
+        assert_eq!(AVAILABLE_MODELS.len(), 10);
     }
 
     #[test]
     fn test_visible_models() {
         let visible = get_visible_models();
-        assert_eq!(visible.len(), 5);
+        assert_eq!(visible.len(), 6);
     }
 
     #[test]
     fn test_model_exists() {
+        assert!(model_exists("gpt-5.5"));
         assert!(model_exists("gpt-5.3-codex"));
         assert!(model_exists("gpt-5.3-codex:latest"));
         assert!(!model_exists("nonexistent-model"));
@@ -169,6 +174,7 @@ mod tests {
 
     #[test]
     fn test_get_context_length() {
+        assert_eq!(get_context_length("gpt-5.5"), 1_050_000);
         assert_eq!(get_context_length("gpt-5.4"), 1_050_000);
         assert_eq!(get_context_length("gpt-5.3-codex-spark"), 128_000);
         assert_eq!(get_context_length("unknown"), 400_000);

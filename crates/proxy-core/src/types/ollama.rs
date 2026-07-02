@@ -248,7 +248,8 @@ mod tests {
 
     #[test]
     fn test_generate_request_roundtrip() {
-        let json = r#"{"model":"codex","prompt":"Write code","system":"You are a coder","stream":true}"#;
+        let json =
+            r#"{"model":"codex","prompt":"Write code","system":"You are a coder","stream":true}"#;
         let req: OllamaGenerateRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.model, "codex");
         assert_eq!(req.prompt, "Write code");

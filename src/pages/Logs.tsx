@@ -1,6 +1,12 @@
 import { useEffect, useState, useRef } from "react";
 import { cn } from "@/lib/utils";
-import { getRecentLogs, listen, type UnlistenFn } from "@/lib/tauri";
+import {
+  getRecentLogs,
+  isTauriRuntime,
+  listen,
+  type LogEntry,
+  type UnlistenFn,
+} from "@/lib/tauri";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -19,19 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ScrollText, Trash2 } from "lucide-react";
-
-interface LogEntry {
-  id: string;
-  timestamp: string;
-  method: string;
-  path: string;
-  model?: string;
-  status: number;
-  duration_ms: number;
-  input_tokens?: number;
-  output_tokens?: number;
-}
+import { ScrollText, Trash2, Activity } from "lucide-react";
 
 function getStatusClasses(status: number): string {
   if (status >= 200 && status < 300) return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
@@ -40,32 +34,69 @@ function getStatusClasses(status: number): string {
   return "";
 }
 
+function formatLogTime(timestamp: string): string {
+  const date = new Date(timestamp);
+  const hours = date.getHours().toString().padStart(2, "0");
+  const minutes = date.getMinutes().toString().padStart(2, "0");
+  const seconds = date.getSeconds().toString().padStart(2, "0");
+  return `${hours}:${minutes}:${seconds}`;
+}
+
 export default function Logs() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [modelFilter, setModelFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [error, setError] = useState<string | null>(null);
   const autoScroll = true;
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    let active = true;
     let unlisten: UnlistenFn | undefined;
+    let interval: ReturnType<typeof setInterval> | undefined;
+    const shouldPoll = !isTauriRuntime();
+
+    const refreshLogs = async () => {
+      const nextLogs = await getRecentLogs(100);
+      if (active) {
+        setLogs(nextLogs);
+      }
+    };
 
     const init = async () => {
       try {
-        const initialLogs = await getRecentLogs(100);
-        setLogs(initialLogs);
+        await refreshLogs();
 
-        unlisten = await listen<LogEntry>("log-entry", (event) => {
-          setLogs((prev) => {
-            const newLogs = [...prev, event.payload];
-            return newLogs.length > 500 ? newLogs.slice(-500) : newLogs;
+        if (shouldPoll) {
+          interval = setInterval(() => {
+            refreshLogs().catch(() => undefined);
+          }, 1500);
+        } else {
+          unlisten = await listen<LogEntry>("log-entry", (event) => {
+            setLogs((prev) => {
+              const newLogs = [...prev, event.payload];
+              return newLogs.length > 500 ? newLogs.slice(-500) : newLogs;
+            });
           });
-        });
-      } catch {}
+          if (!active) {
+            unlisten();
+          }
+        }
+      } catch {
+        if (active) {
+          setError("Failed to load logs. Please try again.");
+        }
+      }
     };
 
     init();
-    return () => { unlisten?.(); };
+    return () => {
+      active = false;
+      if (interval) {
+        clearInterval(interval);
+      }
+      unlisten?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -86,8 +117,12 @@ export default function Logs() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="shrink-0 flex items-center justify-between gap-4 px-6 py-3 border-b">
+      <div className="shrink-0 flex h-[57px] items-center justify-between gap-4 border-b px-4">
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
+            <Activity className="h-3.5 w-3.5" />
+            Traffic
+          </div>
           <Select value={modelFilter} onValueChange={setModelFilter}>
             <SelectTrigger className="w-[150px] h-8 text-xs">
               <SelectValue placeholder="All Models" />
@@ -115,6 +150,11 @@ export default function Logs() {
           <Badge variant="secondary" className="text-xs font-mono">
             {filteredLogs.length}/{logs.length}
           </Badge>
+          {error && (
+            <Badge variant="outline" className="text-xs text-destructive border-destructive/30">
+              {error}
+            </Badge>
+          )}
         </div>
 
         <Button
@@ -130,20 +170,21 @@ export default function Logs() {
 
       <div className="flex-1 overflow-hidden">
         <ScrollArea className="h-full">
-          <Table>
+          <Table className="table-fixed">
             <TableHeader className="sticky top-0 bg-background z-10">
               <TableRow>
-                <TableHead className="w-[130px]">Time</TableHead>
-                <TableHead>Path</TableHead>
-                <TableHead className="w-[100px]">Model</TableHead>
-                <TableHead className="w-[60px]">Status</TableHead>
-                <TableHead className="w-[80px] text-right">Duration</TableHead>
+                <TableHead className="h-9 w-[72px] px-3 text-[11px] uppercase">Time</TableHead>
+                <TableHead className="h-9 px-3 text-[11px] uppercase">Request</TableHead>
+                <TableHead className="h-9 w-[76px] px-3 text-[11px] uppercase">Model</TableHead>
+                <TableHead className="h-9 w-[58px] px-3 text-[11px] uppercase">Status</TableHead>
+                <TableHead className="h-9 w-[64px] px-3 text-right text-[11px] uppercase">Tokens</TableHead>
+                <TableHead className="h-9 w-[54px] px-3 text-right text-[11px] uppercase">MS</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredLogs.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-48">
+                  <TableCell colSpan={6} className="h-48">
                     <div className="flex flex-col items-center gap-2 text-center">
                       <ScrollText className="w-8 h-8 text-muted-foreground/30" />
                       <p className="text-sm text-muted-foreground">No logs recorded yet</p>
@@ -153,27 +194,39 @@ export default function Logs() {
               ) : (
                 filteredLogs.map((log, index) => (
                   <TableRow key={`${log.id}-${index}`}>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {new Date(log.timestamp).toLocaleTimeString()}
+                    <TableCell className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                      {formatLogTime(log.timestamp)}
                     </TableCell>
-                    <TableCell className="font-mono text-xs truncate max-w-[180px]" title={`${log.method} ${log.path}`}>
-                      {log.path}
+                    <TableCell className="min-w-0 px-3 py-2" title={`${log.method} ${log.path}`}>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <Badge variant="outline" className="h-5 shrink-0 rounded px-1.5 font-mono text-[10px]">
+                          {log.method}
+                        </Badge>
+                        <span className="truncate font-mono text-xs">{log.path}</span>
+                      </div>
                     </TableCell>
-                    <TableCell className="text-xs truncate max-w-[100px]" title={log.model || "-"}>
+                    <TableCell className="max-w-[76px] truncate px-3 py-2 text-xs" title={log.model || "-"}>
                       {log.model || <span className="text-muted-foreground">—</span>}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="px-3 py-2">
                       <Badge variant="outline" className={cn("font-mono text-[10px]", getStatusClasses(log.status))}>
                         {log.status}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right font-mono text-xs">
-                      {log.duration_ms}ms
+                    <TableCell className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">
+                      {log.input_tokens ?? "—"}/{log.output_tokens ?? "—"}
+                    </TableCell>
+                    <TableCell className="px-3 py-2 text-right font-mono text-xs">
+                      {log.duration_ms}
                     </TableCell>
                   </TableRow>
                 ))
               )}
-              <div ref={scrollRef} />
+              <TableRow aria-hidden="true">
+                <TableCell colSpan={6} className="h-0 p-0">
+                  <div ref={scrollRef} />
+                </TableCell>
+              </TableRow>
             </TableBody>
           </Table>
         </ScrollArea>

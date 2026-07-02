@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
 
-
 pub const MAX_LOG_ENTRIES: usize = 500;
 
 /// Logs are never persisted to SQLite (GR4 — in-memory only).
@@ -21,17 +20,24 @@ pub struct LogEntry {
     pub output_tokens: Option<u32>,
 }
 
-
 pub fn new_log_buffer() -> LogBuffer {
     Arc::new(RwLock::new(VecDeque::with_capacity(MAX_LOG_ENTRIES)))
 }
 
+pub fn sanitize_log_path(path: &str) -> String {
+    let Some((base, _query)) = path.split_once('?') else {
+        return path.to_string();
+    };
+    format!("{}?<redacted>", base)
+}
+
 /// Evicts oldest entry when buffer reaches MAX_LOG_ENTRIES.
-pub fn push_log(buffer: &LogBuffer, entry: LogEntry) {
+pub fn push_log(buffer: &LogBuffer, mut entry: LogEntry) {
     let Ok(mut buf) = buffer.write() else {
         tracing::warn!("LogBuffer lock poisoned; dropping log entry");
         return;
     };
+    entry.path = sanitize_log_path(&entry.path);
     if buf.len() >= MAX_LOG_ENTRIES {
         buf.pop_front();
     }
@@ -44,11 +50,7 @@ pub fn get_recent_logs(buffer: &LogBuffer, limit: usize) -> Vec<LogEntry> {
         tracing::warn!("LogBuffer lock poisoned; returning empty");
         return Vec::new();
     };
-    buf.iter()
-        .rev()
-        .take(limit)
-        .cloned()
-        .collect()
+    buf.iter().rev().take(limit).cloned().collect()
 }
 
 #[cfg(test)]
@@ -121,5 +123,14 @@ mod tests {
         let json = serde_json::to_string(&entry).expect("serialize");
         assert!(json.contains("\"id\":\"test\""));
         assert!(json.contains("\"status\":200"));
+    }
+
+    #[test]
+    fn test_sanitize_log_path_redacts_query() {
+        assert_eq!(
+            sanitize_log_path("/oauth/callback?code=secret&access_token=x"),
+            "/oauth/callback?<redacted>"
+        );
+        assert_eq!(sanitize_log_path("/api/chat"), "/api/chat");
     }
 }

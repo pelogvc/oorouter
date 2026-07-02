@@ -102,6 +102,13 @@ pub struct OpenAIStreamOptions {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum OpenAIStop {
+    Single(String),
+    Multiple(Vec<String>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenAIChatRequest {
     pub model: String,
     pub messages: Vec<OpenAIChatMessage>,
@@ -110,11 +117,21 @@ pub struct OpenAIChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<OpenAIStop>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_completion_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<OpenAITool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_calls: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<OpenAIStreamOptions>,
 }
@@ -141,6 +158,10 @@ pub struct OpenAIUsage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens_details: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_tokens_details: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,7 +173,7 @@ pub struct OpenAIChunk {
     pub system_fingerprint: String,
     pub choices: Vec<OpenAIChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub usage: Option<OpenAIUsage>,
+    pub usage: Option<serde_json::Value>,
 }
 
 // Non-streaming response types
@@ -256,5 +277,16 @@ mod tests {
         assert_eq!(req.model, "gpt-5.3-codex");
         assert!(req.tools.is_some());
         assert_eq!(req.tools.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_chat_request_accepts_extended_openai_fields() {
+        let json = r#"{"model":"gpt-5.3-codex","messages":[],"top_p":0.9,"stop":["END"],"max_completion_tokens":128,"parallel_tool_calls":false,"reasoning_effort":"low"}"#;
+        let req: OpenAIChatRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.top_p, Some(0.9));
+        assert!(matches!(req.stop, Some(OpenAIStop::Multiple(_))));
+        assert_eq!(req.max_completion_tokens, Some(128));
+        assert_eq!(req.parallel_tool_calls, Some(false));
+        assert_eq!(req.reasoning_effort, Some("low".to_string()));
     }
 }

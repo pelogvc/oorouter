@@ -8,41 +8,58 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
 
 const version = process.argv[2];
+const semverPattern =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*)?$/;
 
-if (!version) {
-  console.error('Usage: node sync-version.mjs <version>');
+if (!version || !semverPattern.test(version)) {
+  console.error('Usage: node sync-version.mjs <version> (semver, e.g. 1.2.3 or 1.2.3-beta.1)');
   process.exit(1);
 }
 
-// Update package.json
 const packageJsonPath = path.join(rootDir, 'package.json');
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
 packageJson.version = version;
-fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + '\n');
-console.log(`Updated package.json to version ${version}`);
+const packageJsonOutput = JSON.stringify(packageJson, null, 2) + '\n';
 
-// Update src-tauri/tauri.conf.json
 const tauriConfPath = path.join(rootDir, 'src-tauri', 'tauri.conf.json');
 const tauriConf = JSON.parse(fs.readFileSync(tauriConfPath, 'utf-8'));
 tauriConf.version = version;
-fs.writeFileSync(tauriConfPath, JSON.stringify(tauriConf, null, 2) + '\n');
-console.log(`Updated src-tauri/tauri.conf.json to version ${version}`);
+const tauriConfOutput = JSON.stringify(tauriConf, null, 2) + '\n';
 
-// Update src-tauri/Cargo.toml
 const cargoTomlPath = path.join(rootDir, 'src-tauri', 'Cargo.toml');
 let cargoToml = fs.readFileSync(cargoTomlPath, 'utf-8');
-cargoToml = cargoToml.replace(/^version = ".*"$/m, `version = "${version}"`);
+const packageVersionPattern =
+  /(^\[package\]\n(?:[^\[]|\[(?![^\]]+\]))*?^version\s*=\s*)"[^"]*"/m;
+if (!packageVersionPattern.test(cargoToml)) {
+  throw new Error('Could not find [package] version in src-tauri/Cargo.toml');
+}
+cargoToml = cargoToml.replace(packageVersionPattern, `$1"${version}"`);
+
+const cargoLockPath = path.join(rootDir, 'Cargo.lock');
+let cargoLockOutput = null;
+if (fs.existsSync(cargoLockPath)) {
+  const cargoLock = fs.readFileSync(cargoLockPath, 'utf-8');
+  const cargoLockVersionPattern = /(\[\[package\]\]\nname = "oorouter"\nversion = )"([^"]*)"/;
+  const cargoLockMatch = cargoLock.match(cargoLockVersionPattern);
+  if (!cargoLockMatch) {
+    throw new Error('Could not find oorouter package version in Cargo.lock');
+  }
+  cargoLockOutput =
+    cargoLockMatch[2] === version
+      ? cargoLock
+      : cargoLock.replace(cargoLockVersionPattern, `$1"${version}"`);
+}
+
+fs.writeFileSync(packageJsonPath, packageJsonOutput);
+console.log(`Updated package.json to version ${version}`);
+
+fs.writeFileSync(tauriConfPath, tauriConfOutput);
+console.log(`Updated src-tauri/tauri.conf.json to version ${version}`);
+
 fs.writeFileSync(cargoTomlPath, cargoToml);
 console.log(`Updated src-tauri/Cargo.toml to version ${version}`);
 
-// Update Cargo.lock
-const cargoLockPath = path.join(rootDir, 'Cargo.lock');
-if (fs.existsSync(cargoLockPath)) {
-  let cargoLock = fs.readFileSync(cargoLockPath, 'utf-8');
-  cargoLock = cargoLock.replace(
-    /(\[\[package\]\]\nname = "oorouter"\nversion = )"[^"]*"/,
-    `$1"${version}"`
-  );
-  fs.writeFileSync(cargoLockPath, cargoLock);
+if (cargoLockOutput !== null) {
+  fs.writeFileSync(cargoLockPath, cargoLockOutput);
   console.log(`Updated Cargo.lock to version ${version}`);
 }

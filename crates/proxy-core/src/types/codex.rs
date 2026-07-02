@@ -1,10 +1,12 @@
 // Codex Auth & Responses API Types
 // Ported from: src/providers/codex/types.ts
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 // Auth types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CodexTokenData {
     pub access_token: String,
     pub refresh_token: Option<String>,
@@ -12,13 +14,44 @@ pub struct CodexTokenData {
     pub id_token: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl fmt::Debug for CodexTokenData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CodexTokenData")
+            .field("access_token", &"<redacted>")
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "account_id",
+                &self.account_id.as_ref().map(|_| "<redacted>"),
+            )
+            .field("id_token", &self.id_token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CodexAuth {
     pub auth_mode: Option<String>,
     #[serde(rename = "OPENAI_API_KEY")]
     pub openai_api_key: Option<String>,
     pub tokens: Option<CodexTokenData>,
     pub last_refresh: Option<String>,
+}
+
+impl fmt::Debug for CodexAuth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CodexAuth")
+            .field("auth_mode", &self.auth_mode)
+            .field(
+                "openai_api_key",
+                &self.openai_api_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field("tokens", &self.tokens)
+            .field("last_refresh", &self.last_refresh)
+            .finish()
+    }
 }
 
 // Content items
@@ -74,7 +107,7 @@ pub struct CodexResponsesRequest {
     pub instructions: String,
     pub input: Vec<CodexInputItem>,
     pub tools: Vec<serde_json::Value>,
-    pub tool_choice: String,
+    pub tool_choice: serde_json::Value,
     pub parallel_tool_calls: bool,
     pub store: bool,
     pub stream: bool,
@@ -82,7 +115,11 @@ pub struct CodexResponsesRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<serde_json::Value>,
 }
 
 // SSE Events
@@ -129,6 +166,8 @@ pub struct CodexSSEResponseData {
     pub id: Option<String>,
     pub usage: Option<CodexSSEResponseUsage>,
     pub error: Option<serde_json::Value>,
+    pub status: Option<String>,
+    pub incomplete_details: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,6 +249,7 @@ pub enum CodexSSEEvent {
     Delta(CodexSSEDeltaEvent),
     OutputItemDone(CodexSSEOutputItemDone),
     Completed(CodexSSECompletedEvent),
+    Incomplete(CodexSSECompletedEvent),
     Failed(CodexSSEFailedEvent),
     Created(CodexSSECreatedEvent),
     OutputItemAdded(CodexSSEOutputItemAdded),
@@ -224,39 +264,40 @@ impl<'de> serde::Deserialize<'de> for CodexSSEEvent {
         D: serde::Deserializer<'de>,
     {
         let value = serde_json::Value::deserialize(deserializer)?;
-        let event_type = value
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
         match event_type {
-            "response.output_text.delta" => {
-                serde_json::from_value(value).map(CodexSSEEvent::Delta).map_err(serde::de::Error::custom)
-            }
-            "response.output_item.done" => {
-                serde_json::from_value(value).map(CodexSSEEvent::OutputItemDone).map_err(serde::de::Error::custom)
-            }
-            "response.completed" | "response.done" => {
-                serde_json::from_value(value).map(CodexSSEEvent::Completed).map_err(serde::de::Error::custom)
-            }
-            "response.failed" => {
-                serde_json::from_value(value).map(CodexSSEEvent::Failed).map_err(serde::de::Error::custom)
-            }
-            "response.created" => {
-                serde_json::from_value(value).map(CodexSSEEvent::Created).map_err(serde::de::Error::custom)
-            }
-            "response.output_item.added" => {
-                serde_json::from_value(value).map(CodexSSEEvent::OutputItemAdded).map_err(serde::de::Error::custom)
-            }
-            "response.function_call_arguments.delta" => {
-                serde_json::from_value(value).map(CodexSSEEvent::FunctionCallArgsDelta).map_err(serde::de::Error::custom)
-            }
-            "response.function_call_arguments.done" => {
-                serde_json::from_value(value).map(CodexSSEEvent::FunctionCallArgsDone).map_err(serde::de::Error::custom)
-            }
-            _ => {
-                serde_json::from_value(value).map(CodexSSEEvent::Generic).map_err(serde::de::Error::custom)
-            }
+            "response.output_text.delta" => serde_json::from_value(value)
+                .map(CodexSSEEvent::Delta)
+                .map_err(serde::de::Error::custom),
+            "response.output_item.done" => serde_json::from_value(value)
+                .map(CodexSSEEvent::OutputItemDone)
+                .map_err(serde::de::Error::custom),
+            "response.completed" | "response.done" => serde_json::from_value(value.clone())
+                .map(CodexSSEEvent::Completed)
+                .or_else(|_| serde_json::from_value(value).map(CodexSSEEvent::Generic))
+                .map_err(serde::de::Error::custom),
+            "response.incomplete" => serde_json::from_value(value)
+                .map(CodexSSEEvent::Incomplete)
+                .map_err(serde::de::Error::custom),
+            "response.failed" => serde_json::from_value(value)
+                .map(CodexSSEEvent::Failed)
+                .map_err(serde::de::Error::custom),
+            "response.created" => serde_json::from_value(value)
+                .map(CodexSSEEvent::Created)
+                .map_err(serde::de::Error::custom),
+            "response.output_item.added" => serde_json::from_value(value)
+                .map(CodexSSEEvent::OutputItemAdded)
+                .map_err(serde::de::Error::custom),
+            "response.function_call_arguments.delta" => serde_json::from_value(value)
+                .map(CodexSSEEvent::FunctionCallArgsDelta)
+                .map_err(serde::de::Error::custom),
+            "response.function_call_arguments.done" => serde_json::from_value(value)
+                .map(CodexSSEEvent::FunctionCallArgsDone)
+                .map_err(serde::de::Error::custom),
+            _ => serde_json::from_value(value)
+                .map(CodexSSEEvent::Generic)
+                .map_err(serde::de::Error::custom),
         }
     }
 }
@@ -266,6 +307,7 @@ impl CodexSSEEvent {
             CodexSSEEvent::Delta(e) => &e.event_type,
             CodexSSEEvent::OutputItemDone(e) => &e.event_type,
             CodexSSEEvent::Completed(e) => &e.event_type,
+            CodexSSEEvent::Incomplete(e) => &e.event_type,
             CodexSSEEvent::Failed(e) => &e.event_type,
             CodexSSEEvent::Created(e) => &e.event_type,
             CodexSSEEvent::OutputItemAdded(e) => &e.event_type,
@@ -322,18 +364,28 @@ mod tests {
                 }],
             })],
             tools: vec![],
-            tool_choice: "auto".to_string(),
+            tool_choice: serde_json::json!("auto"),
             parallel_tool_calls: false,
             store: false,
             stream: true,
             include: vec!["usage".to_string()],
             temperature: None,
+            top_p: None,
             max_output_tokens: None,
+            reasoning: None,
         };
 
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("gpt-5.3-codex"));
         assert!(json.contains("input_text"));
+    }
+
+    #[test]
+    fn test_incomplete_event_parse() {
+        let json = r#"{"type":"response.incomplete","response":{"id":"resp_123","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30}}}"#;
+        let event: CodexSSEEvent = serde_json::from_str(json).unwrap();
+        assert!(matches!(event, CodexSSEEvent::Incomplete(_)));
+        assert_eq!(event.event_type(), "response.incomplete");
     }
 
     #[test]

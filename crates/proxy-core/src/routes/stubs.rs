@@ -2,10 +2,12 @@
 
 use axum::http::StatusCode;
 use axum::Json;
-use serde_json::json;
 use chrono::{Duration, SecondsFormat, Utc};
+use serde_json::json;
 
-use crate::types::ollama::{OllamaEmbedRequest, OllamaPsResponse, OllamaVersionResponse, OllamaPsModel};
+use crate::types::ollama::{
+    OllamaEmbedRequest, OllamaPsModel, OllamaPsResponse, OllamaVersionResponse,
+};
 
 pub async fn post_embed(
     Json(body): Json<OllamaEmbedRequest>,
@@ -26,8 +28,7 @@ pub async fn get_ps() -> Json<OllamaPsResponse> {
 
     let now = Utc::now();
     let now_str = now.to_rfc3339_opts(SecondsFormat::Millis, true);
-    let expires_at = (now + Duration::minutes(5))
-        .to_rfc3339_opts(SecondsFormat::Millis, true);
+    let expires_at = (now + Duration::minutes(5)).to_rfc3339_opts(SecondsFormat::Millis, true);
     let models = get_visible_models()
         .into_iter()
         .map(|m| OllamaPsModel {
@@ -84,7 +85,9 @@ mod tests {
         let (status, Json(body)) = post_embed(Json(req)).await;
         assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
         assert_eq!(body["model"], "test");
-        assert!(body["embeddings"].as_array().map_or(false, |a| a.is_empty()));
+        assert!(body["embeddings"]
+            .as_array()
+            .map_or(false, |a| a.is_empty()));
     }
 
     #[tokio::test]

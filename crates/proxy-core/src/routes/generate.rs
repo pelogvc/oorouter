@@ -1,21 +1,22 @@
 use std::time::Instant;
 
 use axum::{
-    Json,
     body::Body,
     extract::State,
     http::{HeaderMap, HeaderValue},
     response::IntoResponse,
+    Json,
 };
 use chrono::{SecondsFormat, Utc};
 use uuid::Uuid;
 
-use super::{AppState, map_proxy_error};
+use super::{map_proxy_error, AppState};
 use crate::{
     converter::generate_request_to_codex,
-    logger::{LogEntry, push_log},
-    streaming::{StreamContext, collect_sse_response, create_generate_stream},
+    logger::{push_log, LogEntry},
+    streaming::{collect_sse_response, create_generate_stream, StreamContext},
     types::ollama::{OllamaGenerateRequest, OllamaGenerateResponse},
+    usage::{record_token_usage, usage_counts_for_log},
 };
 
 pub async fn handle_generate(
@@ -37,6 +38,7 @@ pub async fn handle_generate(
             .map_err(map_proxy_error)?;
 
         let total_ns = start_time.elapsed().as_nanos() as u64;
+        let (input_tokens, output_tokens) = usage_counts_for_log(collected.usage.as_ref(), &model);
         push_log(
             &state.log_buffer,
             LogEntry {
@@ -47,27 +49,19 @@ pub async fn handle_generate(
                 model: Some(model.clone()),
                 status: 200,
                 duration_ms: total_ns / 1_000_000,
-                input_tokens: collected.usage.as_ref().map(|u| u.input_tokens as u32),
-                output_tokens: collected.usage.as_ref().map(|u| u.output_tokens as u32),
+                input_tokens,
+                output_tokens,
             },
         );
         if let Some(ref usage) = collected.usage {
-            let db = state.db.clone();
-            let model = model.clone();
-            let input = usage.input_tokens as i64;
-            let output = usage.output_tokens as i64;
-            tokio::spawn(async move {
-                if let Err(e) = db.insert_token_usage(&model, "codex", input, output, "/api/generate").await {
-                    eprintln!("[usage] insert failed: {e}");
-                }
-            });
+            record_token_usage(&state.db, &model, "/api/generate", usage).await;
         }
         let response = OllamaGenerateResponse {
             model,
             created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
             response: collected.text,
             done: true,
-            done_reason: Some("stop".to_string()),
+            done_reason: Some(collected.done_reason),
             context: Some(vec![]),
             total_duration: Some(total_ns),
             load_duration: Some(0),
@@ -96,7 +90,10 @@ pub async fn handle_generate(
     );
 
     let mut headers = HeaderMap::new();
-    headers.insert("Content-Type", HeaderValue::from_static("application/x-ndjson"));
+    headers.insert(
+        "Content-Type",
+        HeaderValue::from_static("application/x-ndjson"),
+    );
     headers.insert("Cache-Control", HeaderValue::from_static("no-cache"));
 
     Ok((headers, Body::from_stream(stream)).into_response())

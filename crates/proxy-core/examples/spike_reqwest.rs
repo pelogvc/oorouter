@@ -142,7 +142,10 @@ fn browser_headers() -> HeaderMap {
 
     headers.insert("Content-Type", HeaderValue::from_static("application/json"));
     headers.insert("Accept", HeaderValue::from_static("text/event-stream"));
-    headers.insert("Accept-Language", HeaderValue::from_static("en-US,en;q=0.9"));
+    headers.insert(
+        "Accept-Language",
+        HeaderValue::from_static("en-US,en;q=0.9"),
+    );
     headers.insert("Referer", HeaderValue::from_static("https://chatgpt.com/"));
     headers.insert("Origin", HeaderValue::from_static("https://chatgpt.com"));
     headers.insert("Sec-Fetch-Dest", HeaderValue::from_static("empty"));
@@ -150,7 +153,10 @@ fn browser_headers() -> HeaderMap {
     headers.insert("Sec-Fetch-Site", HeaderValue::from_static("same-origin"));
     headers.insert("Cache-Control", HeaderValue::from_static("no-cache"));
     headers.insert("DNT", HeaderValue::from_static("1"));
-    headers.insert("OpenAI-Beta", HeaderValue::from_static("responses=experimental"));
+    headers.insert(
+        "OpenAI-Beta",
+        HeaderValue::from_static("responses=experimental"),
+    );
     headers.insert("originator", HeaderValue::from_static("codex_cli_rs"));
     headers.insert(
         "User-Agent",

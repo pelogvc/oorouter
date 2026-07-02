@@ -15,7 +15,7 @@ function App() {
       setActiveTab("settings");
     });
     return () => {
-      unlisten.then((fn) => fn());
+      unlisten.then((fn) => fn()).catch(() => undefined);
     };
   }, []);
   const renderContent = () => {

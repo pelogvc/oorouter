@@ -1,6 +1,7 @@
 // Ollama→Codex and OpenAI→Codex request converters
 // Ported from: src/providers/codex/converter.ts
 
+use crate::models::get_model_definition;
 use crate::types::codex::{
     CodexContentItem, CodexFunctionCallItem, CodexFunctionCallOutputItem, CodexInputItem,
     CodexMessageItem, CodexResponsesRequest,
@@ -13,7 +14,7 @@ use crate::types::openai::{
 const MODEL_ALIASES: &[(&str, &str)] = &[
     ("codex", "gpt-5.3-codex"),
     ("spark", "gpt-5.3-codex-spark"),
-    ("gpt5", "gpt-5.4"),
+    ("gpt5", "gpt-5.5"),
 ];
 
 pub fn resolve_model(model: &str) -> String {
@@ -26,10 +27,10 @@ pub fn resolve_model(model: &str) -> String {
     stripped.to_string()
 }
 
-// Temporary stub: assume vision support for all models except spark
-// TODO: Replace with crate::models::get_capabilities when Task 13 is done
 fn model_supports_vision(model: &str) -> bool {
-    !model.contains("spark")
+    get_model_definition(model)
+        .map(|model| model.supports_vision)
+        .unwrap_or_else(|| !model.contains("spark"))
 }
 
 fn extract_text(content: &Option<OpenAIMessageContent>) -> String {
@@ -146,13 +147,15 @@ pub fn chat_request_to_codex(req: &OllamaChatRequest) -> CodexResponsesRequest {
         instructions: system_messages.join("\n\n"),
         input,
         tools: vec![],
-        tool_choice: "auto".to_string(),
+        tool_choice: serde_json::json!("auto"),
         parallel_tool_calls: false,
         store: false,
         stream: true, // ChatGPT backend requires stream=true always
         include: vec![],
         temperature: None,
+        top_p: None,
         max_output_tokens: None,
+        reasoning: None,
     }
 }
 
@@ -185,13 +188,15 @@ pub fn generate_request_to_codex(req: &OllamaGenerateRequest) -> CodexResponsesR
         instructions: req.system.clone().unwrap_or_default(),
         input,
         tools: vec![],
-        tool_choice: "auto".to_string(),
+        tool_choice: serde_json::json!("auto"),
         parallel_tool_calls: false,
         store: false,
         stream: true, // ChatGPT backend requires stream=true always
         include: vec![],
         temperature: None,
+        top_p: None,
         max_output_tokens: None,
+        reasoning: None,
     }
 }
 
@@ -216,7 +221,7 @@ pub fn convert_openai_messages_to_codex(
     let mut input_items: Vec<CodexInputItem> = Vec::new();
 
     for msg in messages {
-        if msg.role == "system" {
+        if msg.role == "system" || msg.role == "developer" {
             system_messages.push(extract_text(&msg.content));
             continue;
         }
@@ -297,16 +302,52 @@ pub fn openai_chat_request_to_codex(req: &OpenAIChatRequest) -> CodexResponsesRe
         instructions,
         input,
         tools,
-        tool_choice: match &req.tool_choice {
-            Some(serde_json::Value::String(s)) => s.clone(),
-            _ => "auto".to_string(),
-        },
-        parallel_tool_calls: has_tools,
+        tool_choice: convert_tool_choice_to_codex(req.tool_choice.as_ref()),
+        parallel_tool_calls: req.parallel_tool_calls.unwrap_or(has_tools),
         store: false,
         stream: true, // ChatGPT backend requires stream=true; non-streaming is assembled from stream
         include: vec![],
-        temperature: None, // ChatGPT backend rejects temperature param
-        max_output_tokens: None, // ChatGPT backend rejects max_output_tokens param
+        // Match openai-oauth's Codex transport: sampling fields are accepted by
+        // the OpenAI-compatible surface but are not forwarded to this backend.
+        temperature: None,
+        top_p: None,
+        // openai-oauth's Codex transport strips max_output_tokens before sending to the
+        // Codex backend, which rejects that Responses field.
+        max_output_tokens: None,
+        reasoning: req.reasoning_effort.as_ref().map(|effort| {
+            serde_json::json!({
+                "effort": effort,
+            })
+        }),
+    }
+}
+
+fn convert_tool_choice_to_codex(tool_choice: Option<&serde_json::Value>) -> serde_json::Value {
+    match tool_choice {
+        Some(serde_json::Value::String(choice)) => serde_json::json!(choice),
+        Some(serde_json::Value::Object(choice)) => {
+            let is_function_choice =
+                choice.get("type").and_then(|value| value.as_str()) == Some("function");
+            let function_name = choice
+                .get("function")
+                .and_then(|value| value.as_object())
+                .and_then(|function| function.get("name"))
+                .and_then(|value| value.as_str())
+                .or_else(|| choice.get("name").and_then(|value| value.as_str()));
+
+            if is_function_choice {
+                if let Some(name) = function_name {
+                    return serde_json::json!({
+                        "type": "function",
+                        "name": name,
+                    });
+                }
+            }
+
+            serde_json::Value::Object(choice.clone())
+        }
+        Some(value) => value.clone(),
+        None => serde_json::json!("auto"),
     }
 }
 
@@ -319,7 +360,7 @@ mod tests {
     fn test_resolve_model_alias() {
         assert_eq!(resolve_model("codex"), "gpt-5.3-codex");
         assert_eq!(resolve_model("spark"), "gpt-5.3-codex-spark");
-        assert_eq!(resolve_model("gpt5"), "gpt-5.4");
+        assert_eq!(resolve_model("gpt5"), "gpt-5.5");
     }
 
     #[test]
@@ -473,17 +514,27 @@ mod tests {
             ],
             stream: Some(false),
             temperature: Some(0.7),
+            top_p: Some(0.9),
+            stop: None,
             max_tokens: Some(100),
+            max_completion_tokens: None,
             tools: None,
             tool_choice: None,
+            parallel_tool_calls: None,
+            reasoning_effort: Some("low".to_string()),
             stream_options: None,
         };
         let codex = openai_chat_request_to_codex(&req);
         assert_eq!(codex.model, "gpt-5.3-codex");
         assert_eq!(codex.instructions, "Be helpful");
         assert_eq!(codex.input.len(), 1);
-        assert_eq!(codex.temperature, None); // ChatGPT backend rejects temperature
-        assert_eq!(codex.max_output_tokens, None); // ChatGPT backend rejects max_output_tokens
+        assert_eq!(codex.temperature, None);
+        assert_eq!(codex.top_p, None);
+        assert_eq!(
+            codex.reasoning,
+            Some(serde_json::json!({ "effort": "low" }))
+        );
+        assert_eq!(codex.max_output_tokens, None);
     }
 
     #[test]
@@ -523,9 +574,14 @@ mod tests {
             ],
             stream: None,
             temperature: None,
+            top_p: None,
+            stop: None,
             max_tokens: None,
+            max_completion_tokens: None,
             tools: None,
             tool_choice: None,
+            parallel_tool_calls: None,
+            reasoning_effort: None,
             stream_options: None,
         };
         let codex = openai_chat_request_to_codex(&req);
@@ -552,7 +608,10 @@ mod tests {
             }],
             stream: Some(false),
             temperature: None,
+            top_p: None,
+            stop: None,
             max_tokens: None,
+            max_completion_tokens: None,
             tools: Some(vec![OpenAITool {
                 tool_type: "function".to_string(),
                 function: OpenAIToolFunction {
@@ -562,6 +621,8 @@ mod tests {
                 },
             }]),
             tool_choice: Some(serde_json::Value::String("auto".to_string())),
+            parallel_tool_calls: None,
+            reasoning_effort: None,
             stream_options: None,
         };
 
@@ -569,7 +630,119 @@ mod tests {
         assert_eq!(codex.model, "gpt-5.3-codex");
         assert_eq!(codex.tools.len(), 1);
         assert!(codex.parallel_tool_calls);
-        assert_eq!(codex.tool_choice, "auto");
+        assert_eq!(codex.tool_choice, serde_json::json!("auto"));
+    }
+
+    #[test]
+    fn test_openai_chat_request_to_codex_with_forced_function_tool_choice() {
+        use crate::types::openai::OpenAIToolFunction;
+
+        let req = OpenAIChatRequest {
+            model: "codex".to_string(),
+            messages: vec![OpenAIChatMessage {
+                role: "user".to_string(),
+                content: Some(OpenAIMessageContent::Text("Hi".to_string())),
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            stream: Some(false),
+            temperature: None,
+            top_p: None,
+            stop: None,
+            max_tokens: None,
+            max_completion_tokens: None,
+            tools: Some(vec![OpenAITool {
+                tool_type: "function".to_string(),
+                function: OpenAIToolFunction {
+                    name: "search_docs".to_string(),
+                    description: Some("Search docs".to_string()),
+                    parameters: Some(serde_json::json!({"type": "object"})),
+                },
+            }]),
+            tool_choice: Some(serde_json::json!({
+                "type": "function",
+                "function": { "name": "search_docs" }
+            })),
+            parallel_tool_calls: None,
+            reasoning_effort: None,
+            stream_options: None,
+        };
+
+        let codex = openai_chat_request_to_codex(&req);
+        assert_eq!(
+            codex.tool_choice,
+            serde_json::json!({
+                "type": "function",
+                "name": "search_docs"
+            })
+        );
+    }
+
+    #[test]
+    fn test_openai_chat_request_to_codex_with_flat_function_tool_choice() {
+        let req = OpenAIChatRequest {
+            model: "codex".to_string(),
+            messages: vec![OpenAIChatMessage {
+                role: "user".to_string(),
+                content: Some(OpenAIMessageContent::Text("Hi".to_string())),
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            stream: Some(false),
+            temperature: None,
+            top_p: None,
+            stop: None,
+            max_tokens: None,
+            max_completion_tokens: None,
+            tools: None,
+            tool_choice: Some(serde_json::json!({
+                "type": "function",
+                "name": "search_docs"
+            })),
+            parallel_tool_calls: None,
+            reasoning_effort: None,
+            stream_options: None,
+        };
+
+        let codex = openai_chat_request_to_codex(&req);
+        assert_eq!(
+            codex.tool_choice,
+            serde_json::json!({
+                "type": "function",
+                "name": "search_docs"
+            })
+        );
+    }
+
+    #[test]
+    fn test_openai_chat_request_to_codex_preserves_unknown_tool_choice_object() {
+        let tool_choice = serde_json::json!({
+            "type": "function",
+            "function": {}
+        });
+        let req = OpenAIChatRequest {
+            model: "codex".to_string(),
+            messages: vec![OpenAIChatMessage {
+                role: "user".to_string(),
+                content: Some(OpenAIMessageContent::Text("Hi".to_string())),
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            stream: Some(false),
+            temperature: None,
+            top_p: None,
+            stop: None,
+            max_tokens: None,
+            max_completion_tokens: None,
+            tools: None,
+            tool_choice: Some(tool_choice.clone()),
+            parallel_tool_calls: None,
+            reasoning_effort: None,
+            stream_options: None,
+        };
+
+        let codex = openai_chat_request_to_codex(&req);
+        assert_eq!(codex.tool_choice, tool_choice);
     }
 
     #[test]
@@ -674,9 +847,14 @@ mod tests {
             ],
             stream: None,
             temperature: None,
+            top_p: None,
+            stop: None,
             max_tokens: None,
+            max_completion_tokens: None,
             tools: None,
             tool_choice: None,
+            parallel_tool_calls: None,
+            reasoning_effort: None,
             stream_options: None,
         };
         let codex = openai_chat_request_to_codex(&req);

@@ -1,49 +1,75 @@
 use std::sync::{
-    Arc,
     atomic::{AtomicUsize, Ordering},
+    Arc,
 };
 
 use axum::{
-    Router,
     body::Body,
-    http::{HeaderValue, StatusCode, header},
+    http::{header, HeaderValue, StatusCode},
     response::Response,
-    routing::post,
+    routing::{get, post},
+    Json, Router,
 };
 use proxy_core::{
     auth::{AuthInfo, AuthMode},
     client::CodexClient,
     db::Database,
     logger::new_log_buffer,
-    routes::{AppState, create_router},
+    routes::{create_router, AppState},
 };
 use tempfile::TempDir;
 use tokio::{net::TcpListener, task::JoinHandle};
 
-async fn spawn_mock_backend() -> (String, Arc<AtomicUsize>, JoinHandle<()>) {
-    let request_count = Arc::new(AtomicUsize::new(0));
-    let request_count_for_handler = Arc::clone(&request_count);
+async fn spawn_mock_backend() -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>, JoinHandle<()>) {
+    let responses_request_count = Arc::new(AtomicUsize::new(0));
+    let models_request_count = Arc::new(AtomicUsize::new(0));
+    let responses_request_count_for_handler = Arc::clone(&responses_request_count);
+    let models_request_count_for_handler = Arc::clone(&models_request_count);
 
-    let app = Router::new().route(
-        "/backend-api/codex/responses",
-        post(move || {
-            let request_count_for_handler = Arc::clone(&request_count_for_handler);
-            async move {
-                request_count_for_handler.fetch_add(1, Ordering::SeqCst);
+    let app = Router::new()
+        .route(
+            "/backend-api/codex/responses",
+            post(move |Json(payload): Json<serde_json::Value>| {
+                let responses_request_count_for_handler =
+                    Arc::clone(&responses_request_count_for_handler);
+                async move {
+                    responses_request_count_for_handler.fetch_add(1, Ordering::SeqCst);
+                    assert!(
+                        payload.get("max_output_tokens").is_none(),
+                        "proxy should strip max_output_tokens before forwarding to Codex"
+                    );
+                    assert_eq!(payload["stream"], true);
 
-                let sse = concat!(
-                    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"mock\"}\n\n",
-                    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n"
-                );
+                    let sse = concat!(
+                        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"mock\"}\n\n",
+                        "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\",\"object\":\"response\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"mock\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n"
+                    );
 
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, HeaderValue::from_static("text/event-stream"))
-                    .body(Body::from(sse))
-                    .expect("mock backend response build")
-            }
-        }),
-    );
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, HeaderValue::from_static("text/event-stream"))
+                        .body(Body::from(sse))
+                        .expect("mock backend response build")
+                }
+            }),
+        )
+        .route(
+            "/backend-api/codex/models",
+            get(move || {
+                let models_request_count_for_handler =
+                    Arc::clone(&models_request_count_for_handler);
+                async move {
+                    models_request_count_for_handler.fetch_add(1, Ordering::SeqCst);
+                    Json(serde_json::json!({
+                        "models": [
+                            { "slug": "mock-codex" },
+                            { "slug": "mock-codex" },
+                            { "slug": "mock-spark" }
+                        ]
+                    }))
+                }
+            }),
+        );
 
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -58,7 +84,8 @@ async fn spawn_mock_backend() -> (String, Arc<AtomicUsize>, JoinHandle<()>) {
 
     (
         format!("http://{}/backend-api/codex/responses", addr),
-        request_count,
+        responses_request_count,
+        models_request_count,
         handle,
     )
 }
@@ -88,9 +115,7 @@ async fn spawn_proxy_server(api_url: String) -> (String, TempDir, JoinHandle<()>
         .expect("bind proxy listener");
     let addr = listener.local_addr().expect("proxy local addr");
     let handle = tokio::spawn(async move {
-        axum::serve(listener, app)
-            .await
-            .expect("run proxy server");
+        axum::serve(listener, app).await.expect("run proxy server");
     });
 
     (format!("http://{}", addr), temp_dir, handle)
@@ -98,7 +123,8 @@ async fn spawn_proxy_server(api_url: String) -> (String, TempDir, JoinHandle<()>
 
 #[tokio::test]
 async fn integration_endpoints_with_live_axum_server() {
-    let (mock_api_url, mock_request_count, mock_handle) = spawn_mock_backend().await;
+    let (mock_api_url, responses_request_count, models_request_count, mock_handle) =
+        spawn_mock_backend().await;
     let (base_url, _temp_dir, proxy_handle) = spawn_proxy_server(mock_api_url).await;
     let http = reqwest::Client::new();
 
@@ -109,6 +135,16 @@ async fn integration_endpoints_with_live_axum_server() {
         .expect("GET /");
     assert_eq!(root.status(), StatusCode::OK);
     assert_eq!(root.text().await.expect("root text"), "Ollama is running");
+
+    let health = http
+        .get(format!("{}/health", base_url))
+        .send()
+        .await
+        .expect("GET /health");
+    assert_eq!(health.status(), StatusCode::OK);
+    let health_json: serde_json::Value = health.json().await.expect("health json");
+    assert_eq!(health_json["ok"], true);
+    assert_eq!(health_json["replay_state"], "stateless");
 
     let tags = http
         .get(format!("{}/api/tags", base_url))
@@ -202,9 +238,88 @@ async fn integration_endpoints_with_live_axum_server() {
         .get("data")
         .and_then(|v| v.as_array())
         .expect("data array");
-    assert!(!data.is_empty());
+    let model_ids: Vec<&str> = data
+        .iter()
+        .map(|model| model["id"].as_str().expect("model id string"))
+        .collect();
+    assert_eq!(
+        model_ids,
+        vec![
+            "gpt-5.5",
+            "gpt-5.4",
+            "gpt-5.3-codex",
+            "gpt-5.2-codex",
+            "gpt-5.2",
+            "gpt-5.3-codex-spark",
+            "mock-codex",
+            "mock-spark",
+        ]
+    );
+    assert!(data
+        .iter()
+        .all(|model| model["object"] == "model" && model["created"] == 0));
 
-    assert_eq!(mock_request_count.load(Ordering::SeqCst), 0);
+    let responses_v1 = http
+        .post(format!("{}/v1/responses", base_url))
+        .json(&serde_json::json!({
+            "model": "gpt-5.3-codex",
+            "input": [{ "role": "user", "content": "hello" }],
+            "stream": false,
+            "max_output_tokens": 8
+        }))
+        .send()
+        .await
+        .expect("POST /v1/responses");
+    assert_eq!(responses_v1.status(), StatusCode::OK);
+    let responses_v1_json: serde_json::Value =
+        responses_v1.json().await.expect("v1/responses json");
+    assert_eq!(responses_v1_json["id"], "resp-1");
+    assert_eq!(responses_v1_json["object"], "response");
+    assert_eq!(responses_v1_json["usage"]["total_tokens"], 2);
+
+    let responses_v1_stream = http
+        .post(format!("{}/v1/responses", base_url))
+        .json(&serde_json::json!({
+            "model": "gpt-5.3-codex",
+            "input": [{ "role": "user", "content": "hello" }],
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("POST /v1/responses stream");
+    assert_eq!(responses_v1_stream.status(), StatusCode::OK);
+    assert!(responses_v1_stream
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("text/event-stream")));
+    let responses_stream_body = responses_v1_stream
+        .text()
+        .await
+        .expect("v1/responses stream body");
+    assert!(responses_stream_body.contains("response.output_text.delta"));
+
+    let chat_v1 = http
+        .post(format!("{}/v1/chat/completions", base_url))
+        .json(&serde_json::json!({
+            "model": "gpt-5.3-codex",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "max_tokens": 8,
+            "reasoning_effort": "low",
+            "stream": false
+        }))
+        .send()
+        .await
+        .expect("POST /v1/chat/completions");
+    assert_eq!(chat_v1.status(), StatusCode::OK);
+    let chat_v1_json: serde_json::Value = chat_v1.json().await.expect("v1/chat json");
+    assert_eq!(chat_v1_json["object"], "chat.completion");
+    assert_eq!(chat_v1_json["choices"][0]["message"]["content"], "mock");
+
+    assert_eq!(models_request_count.load(Ordering::SeqCst), 1);
+    assert_eq!(responses_request_count.load(Ordering::SeqCst), 3);
 
     proxy_handle.abort();
     mock_handle.abort();
