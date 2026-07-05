@@ -72,6 +72,17 @@ function assetDownloadUrl(asset) {
   return asset.browser_download_url;
 }
 
+function assetMetadataUrl(asset) {
+  if (!asset.url) {
+    throw new Error(`Asset ${asset.name} is missing API asset URL`);
+  }
+  return asset.url;
+}
+
+function assetUrlMatches(asset, url) {
+  return url === assetDownloadUrl(asset) || url === assetMetadataUrl(asset);
+}
+
 function assetNames(assets) {
   return assets.map((asset) => asset.name).join(", ");
 }
@@ -128,7 +139,9 @@ async function main() {
     const platformUrl = typeof platform?.url === "string" ? platform.url : "";
     const platformSignature =
       typeof platform?.signature === "string" ? platform.signature.trim() : "";
-    const updaterArchiveUrl = updaterArchive ? assetDownloadUrl(updaterArchive) : "";
+    const updaterArchiveUrlMatches = updaterArchive
+      ? assetUrlMatches(updaterArchive, platformUrl)
+      : false;
     const metadataVersion = typeof latestJson?.version === "string" ? latestJson.version : "";
     const releaseVersion =
       typeof release.tag_name === "string" ? release.tag_name.replace(/^v/, "") : "";
@@ -143,7 +156,7 @@ async function main() {
     );
     check(
       "latest.json URL points to this release updater archive",
-      platformUrl === updaterArchiveUrl,
+      updaterArchiveUrlMatches,
       platformUrl,
       failures
     );

@@ -1,8 +1,16 @@
 import { browser, expect } from "@wdio/globals";
 import { withExecuteOptions } from "@wdio/tauri-service";
 
+const LATEST_UPDATE_METADATA_URL =
+  "https://github.com/pelogvc/oorouter/releases/latest/download/latest.json";
+
 describe("Tauri embedded WebDriver smoke", () => {
   const mainWindow = withExecuteOptions({ windowLabel: "main" });
+  const liveUpdaterCheck = process.env.WDIO_LIVE_UPDATER_CHECK === "true";
+
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+  }
 
   async function getMainWindowSnapshot() {
     const raw = await browser.tauri.execute(
@@ -120,7 +128,60 @@ describe("Tauri embedded WebDriver smoke", () => {
       "window.__TAURI__.core.invoke('get_update_state')",
       mainWindow
     );
-    expect(updateState).toHaveProperty("status", "idle");
-    expect(updateState).toHaveProperty("visible", false);
+    if (liveUpdaterCheck) {
+      expect(updateState).toHaveProperty("currentVersion");
+    } else {
+      expect(updateState).toHaveProperty("status", "idle");
+      expect(updateState).toHaveProperty("visible", false);
+    }
   });
+
+  if (liveUpdaterCheck) {
+    it("detects the latest GitHub updater release from startup background check", async function () {
+      const latestResponse = await fetch(LATEST_UPDATE_METADATA_URL);
+      expect(latestResponse.ok).toBe(true);
+      const latestMetadata = (await latestResponse.json()) as { version?: unknown };
+      expect(typeof latestMetadata.version).toBe("string");
+      const latestVersion = String(latestMetadata.version);
+
+      const initialState = await browser.tauri.execute(
+        "window.__TAURI__.core.invoke('get_update_state')",
+        mainWindow
+      );
+      if (isRecord(initialState) && initialState.currentVersion === latestVersion) {
+        this.skip();
+      }
+
+      await browser.waitUntil(
+        async () => {
+          const state = await browser.tauri.execute(
+            "window.__TAURI__.core.invoke('get_update_state')",
+            mainWindow
+          );
+          return (
+            isRecord(state) &&
+            "status" in state &&
+            "version" in state &&
+            state.status === "available" &&
+            state.version === latestVersion
+          );
+        },
+        {
+          timeout: 30000,
+          timeoutMsg: "startup update check did not detect the latest release",
+        }
+      );
+
+      const updateState = await browser.tauri.execute(
+        "window.__TAURI__.core.invoke('get_update_state')",
+        mainWindow
+      );
+      expect(updateState).toHaveProperty("status", "available");
+      expect(updateState).toHaveProperty("currentVersion");
+      expect(updateState).toHaveProperty("version", latestVersion);
+      expect(updateState).toHaveProperty("visible", true);
+      expect(updateState).toHaveProperty("manual", false);
+      expect(updateState).not.toHaveProperty("currentVersion", latestVersion);
+    });
+  }
 });

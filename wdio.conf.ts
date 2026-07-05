@@ -14,6 +14,7 @@ const dataHome = path.join(e2eDir, "data");
 const appBinaryPath =
   process.env.WDIO_APP_BINARY ?? path.join(rootDir, "target", "debug", "oorouter");
 const proxyPort = process.env.WDIO_PROXY_PORT ?? "19134";
+const liveUpdaterCheck = process.env.WDIO_LIVE_UPDATER_CHECK === "true";
 const viteUrl = "http://127.0.0.1:1420";
 const viteBin = path.join(rootDir, "node_modules", ".bin", "vite");
 let viteServer: ChildProcessWithoutNullStreams | undefined;
@@ -84,7 +85,7 @@ export const config: Options.Testrunner = {
           XDG_DATA_HOME: dataHome,
           PORT: proxyPort,
           LOG_LEVEL: "error",
-          OOROUTER_DISABLE_STARTUP_UPDATE_CHECK: "true",
+          OOROUTER_DISABLE_STARTUP_UPDATE_CHECK: liveUpdaterCheck ? "false" : "true",
         },
       },
     ],
