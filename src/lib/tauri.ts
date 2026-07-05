@@ -81,6 +81,27 @@ export interface Model {
   supports_vision: boolean;
 }
 
+export type UpdateStatus =
+  | "idle"
+  | "checking"
+  | "available"
+  | "installing"
+  | "installed"
+  | "error";
+
+export interface UpdateState {
+  status: UpdateStatus;
+  currentVersion: string;
+  version?: string;
+  date?: string;
+  body?: string;
+  downloadedBytes: number;
+  contentLength?: number;
+  error?: string;
+  visible: boolean;
+  manual: boolean;
+}
+
 interface OllamaTagsResponse {
   models: unknown[];
 }
@@ -199,6 +220,36 @@ function parseModel(value: unknown): Model {
     visible: readBoolean(record, "visible"),
     context_length: readNumber(record, "context_length"),
     supports_vision: readBoolean(record, "supports_vision"),
+  };
+}
+
+function parseUpdateStatus(value: string): UpdateStatus {
+  if (
+    value === "idle" ||
+    value === "checking" ||
+    value === "available" ||
+    value === "installing" ||
+    value === "installed" ||
+    value === "error"
+  ) {
+    return value;
+  }
+  throw new Error(`Invalid update status: ${value}`);
+}
+
+export function parseUpdateState(value: unknown): UpdateState {
+  const record = parseRecord(value);
+  return {
+    status: parseUpdateStatus(readString(record, "status")),
+    currentVersion: readString(record, "currentVersion"),
+    version: readOptionalString(record, "version"),
+    date: readOptionalString(record, "date"),
+    body: readOptionalString(record, "body"),
+    downloadedBytes: readNumber(record, "downloadedBytes"),
+    contentLength: readOptionalNumber(record, "contentLength"),
+    error: readOptionalString(record, "error"),
+    visible: readBoolean(record, "visible"),
+    manual: readBoolean(record, "manual"),
   };
 }
 
@@ -358,4 +409,43 @@ export async function getModels(): Promise<Model[]> {
   }
 
   return readArray(await invoke<unknown>("get_models"), parseModel);
+}
+
+export async function getUpdateState(): Promise<UpdateState> {
+  if (!isRunningInTauri()) {
+    return {
+      status: "idle",
+      currentVersion: "browser",
+      downloadedBytes: 0,
+      visible: false,
+      manual: false,
+    };
+  }
+
+  return parseUpdateState(await invoke<unknown>("get_update_state"));
+}
+
+export async function checkForUpdates(manual = false): Promise<UpdateState> {
+  if (!isRunningInTauri()) {
+    const state = await getUpdateState();
+    return { ...state, manual };
+  }
+
+  return parseUpdateState(await invoke<unknown>("check_for_updates", { manual }));
+}
+
+export async function installUpdate(): Promise<UpdateState> {
+  if (!isRunningInTauri()) {
+    throw new Error("Updates can only be installed from the Tauri app.");
+  }
+
+  return parseUpdateState(await invoke<unknown>("install_update"));
+}
+
+export async function restartApp(): Promise<void> {
+  if (!isRunningInTauri()) {
+    throw new Error("Restart the desktop app manually.");
+  }
+
+  return invoke<void>("restart_app");
 }

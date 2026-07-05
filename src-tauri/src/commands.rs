@@ -1,12 +1,18 @@
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::Emitter;
 use tauri_plugin_autostart::ManagerExt;
+use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::{oneshot, watch};
 
-use crate::state::{ServerStatus, TauriAppState};
+use crate::state::{
+    AppUpdateRuntimeState, AppUpdateState, AppUpdateStatus, ServerStatus, TauriAppState,
+};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ServerStatusDto {
@@ -55,6 +61,21 @@ pub struct ModelDto {
     pub visible: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateStateDto {
+    pub status: String,
+    pub current_version: String,
+    pub version: Option<String>,
+    pub date: Option<String>,
+    pub body: Option<String>,
+    pub downloaded_bytes: u64,
+    pub content_length: Option<u64>,
+    pub error: Option<String>,
+    pub visible: bool,
+    pub manual: bool,
+}
+
 fn clone_proxy_state(
     proxy_state: &Arc<proxy_core::routes::AppState>,
 ) -> proxy_core::routes::AppState {
@@ -65,6 +86,124 @@ fn auth_mode_label(auth: &proxy_core::auth::AuthInfo) -> String {
     match &auth.mode {
         proxy_core::auth::AuthMode::ChatGPT => "ChatGPT".to_string(),
         proxy_core::auth::AuthMode::ApiKey => "ApiKey".to_string(),
+    }
+}
+
+fn update_state_dto(state: &AppUpdateState) -> UpdateStateDto {
+    UpdateStateDto {
+        status: state.status.as_str().to_string(),
+        current_version: state.current_version.clone(),
+        version: state.version.clone(),
+        date: state.date.clone(),
+        body: state.body.clone(),
+        downloaded_bytes: state.downloaded_bytes,
+        content_length: state.content_length,
+        error: state.error.clone(),
+        visible: state.visible,
+        manual: state.manual,
+    }
+}
+
+fn current_update_state(
+    update_runtime: &Arc<Mutex<AppUpdateRuntimeState>>,
+) -> Result<UpdateStateDto, String> {
+    let runtime = update_runtime
+        .lock()
+        .map_err(|_| "update runtime lock poisoned".to_string())?;
+    Ok(update_state_dto(&runtime.state))
+}
+
+fn mutate_update_runtime<F>(
+    app_handle: &tauri::AppHandle,
+    update_runtime: &Arc<Mutex<AppUpdateRuntimeState>>,
+    update: F,
+) -> Result<UpdateStateDto, String>
+where
+    F: FnOnce(&mut AppUpdateRuntimeState),
+{
+    let dto = {
+        let mut runtime = update_runtime
+            .lock()
+            .map_err(|_| "update runtime lock poisoned".to_string())?;
+        update(&mut runtime);
+        update_state_dto(&runtime.state)
+    };
+    let _ = app_handle.emit("update-state-changed", &dto);
+    Ok(dto)
+}
+
+fn emit_update_state(
+    app_handle: &tauri::AppHandle,
+    update_runtime: &Arc<Mutex<AppUpdateRuntimeState>>,
+) {
+    let dto = match update_runtime.lock() {
+        Ok(runtime) => update_state_dto(&runtime.state),
+        Err(_) => return,
+    };
+    let _ = app_handle.emit("update-state-changed", &dto);
+}
+
+struct UpdateOperationGuard {
+    busy: Arc<AtomicBool>,
+}
+
+impl Drop for UpdateOperationGuard {
+    fn drop(&mut self) {
+        self.busy.store(false, Ordering::Release);
+    }
+}
+
+fn reserve_update_operation(busy: &Arc<AtomicBool>) -> Option<UpdateOperationGuard> {
+    busy.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .ok()
+        .map(|_| UpdateOperationGuard { busy: busy.clone() })
+}
+
+fn actionable_update_error(action: &str, error: &str) -> String {
+    format!(
+        "{action} 실패했습니다. 네트워크 상태와 GitHub Release updater metadata를 확인한 뒤 다시 시도하거나, GitHub Release에서 최신 설치 파일을 수동 설치하세요. 세부 오류: {error}"
+    )
+}
+
+fn parse_updater_endpoint_override(value: Option<&str>) -> Result<Option<url::Url>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let endpoint = url::Url::parse(value)
+        .map_err(|error| format!("invalid OOROUTER_UPDATER_ENDPOINT: {error}"))?;
+    if endpoint.scheme() != "https" {
+        return Err("invalid OOROUTER_UPDATER_ENDPOINT: only https URLs are supported".to_string());
+    }
+    if endpoint.host_str() != Some("github.com") {
+        return Err(
+            "invalid OOROUTER_UPDATER_ENDPOINT: only github.com release URLs are supported"
+                .to_string(),
+        );
+    }
+    let path = endpoint.path();
+    let is_versioned_release_asset =
+        path.starts_with("/pelogvc/oorouter/releases/download/") && path.ends_with("/latest.json");
+    let is_latest_release_asset = path == "/pelogvc/oorouter/releases/latest/download/latest.json";
+    if !is_versioned_release_asset && !is_latest_release_asset {
+        return Err(
+            "invalid OOROUTER_UPDATER_ENDPOINT: URL must point to an oorouter GitHub Release latest.json asset"
+                .to_string(),
+        );
+    }
+    Ok(Some(endpoint))
+}
+
+fn updater_endpoint_override_from_env() -> Result<Option<url::Url>, String> {
+    match std::env::var("OOROUTER_UPDATER_ENDPOINT") {
+        Ok(value) => parse_updater_endpoint_override(Some(&value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err("invalid OOROUTER_UPDATER_ENDPOINT: value must be valid UTF-8".to_string())
+        }
     }
 }
 
@@ -321,6 +460,231 @@ pub async fn get_server_status(
 }
 
 #[tauri::command]
+pub async fn get_update_state(
+    state: tauri::State<'_, TauriAppState>,
+) -> Result<UpdateStateDto, String> {
+    current_update_state(&state.update_runtime)
+}
+
+pub(crate) fn spawn_startup_update_check(
+    app_handle: tauri::AppHandle,
+    update_runtime: Arc<Mutex<AppUpdateRuntimeState>>,
+    update_busy: Arc<AtomicBool>,
+) {
+    if std::env::var("OOROUTER_DISABLE_STARTUP_UPDATE_CHECK").as_deref() == Ok("true") {
+        return;
+    }
+
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) =
+            check_for_updates_with_parts(app_handle, update_runtime, update_busy, false).await
+        {
+            tracing::warn!(%error, "startup update check failed");
+        }
+    });
+}
+
+#[tauri::command]
+pub async fn check_for_updates(
+    manual: bool,
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, TauriAppState>,
+) -> Result<UpdateStateDto, String> {
+    check_for_updates_with_parts(
+        app_handle,
+        state.update_runtime.clone(),
+        state.update_busy.clone(),
+        manual,
+    )
+    .await
+}
+
+async fn check_for_updates_with_parts(
+    app_handle: tauri::AppHandle,
+    update_runtime: Arc<Mutex<AppUpdateRuntimeState>>,
+    update_busy: Arc<AtomicBool>,
+    manual: bool,
+) -> Result<UpdateStateDto, String> {
+    let Some(_guard) = reserve_update_operation(&update_busy) else {
+        return current_update_state(&update_runtime);
+    };
+
+    mutate_update_runtime(&app_handle, &update_runtime, |runtime| {
+        let state = &mut runtime.state;
+        state.status = AppUpdateStatus::Checking;
+        state.downloaded_bytes = 0;
+        state.content_length = None;
+        state.error = None;
+        state.visible = false;
+        state.manual = manual;
+    })?;
+
+    let check_result = async {
+        let mut builder = app_handle
+            .updater_builder()
+            .timeout(Duration::from_secs(15));
+        if let Some(endpoint) = updater_endpoint_override_from_env()? {
+            builder = builder
+                .endpoints(vec![endpoint])
+                .map_err(|error| error.to_string())?;
+        }
+        let updater = builder.build().map_err(|error| error.to_string())?;
+        updater.check().await.map_err(|error| error.to_string())
+    }
+    .await;
+
+    match check_result {
+        Ok(Some(update)) => {
+            let date = update.date.as_ref().map(|date| date.to_string());
+            let current_version = update.current_version.clone();
+            let version = update.version.clone();
+            let body = update.body.clone();
+            mutate_update_runtime(&app_handle, &update_runtime, |runtime| {
+                runtime.pending_update = Some(update);
+                let state = &mut runtime.state;
+                state.status = AppUpdateStatus::Available;
+                state.current_version = current_version;
+                state.version = Some(version);
+                state.date = date;
+                state.body = body;
+                state.downloaded_bytes = 0;
+                state.content_length = None;
+                state.error = None;
+                state.visible = true;
+                state.manual = manual;
+            })
+        }
+        Ok(None) => mutate_update_runtime(&app_handle, &update_runtime, |runtime| {
+            runtime.pending_update = None;
+            let state = &mut runtime.state;
+            let current_version = state.current_version.clone();
+            *state = AppUpdateState::idle(current_version);
+            state.manual = manual;
+        }),
+        Err(raw_error) => {
+            tracing::warn!(error = %raw_error, manual, "update check failed");
+            mutate_update_runtime(&app_handle, &update_runtime, |runtime| {
+                runtime.pending_update = None;
+                let state = &mut runtime.state;
+                state.status = AppUpdateStatus::Error;
+                state.version = None;
+                state.date = None;
+                state.body = None;
+                state.downloaded_bytes = 0;
+                state.content_length = None;
+                state.error = Some(actionable_update_error("업데이트 확인에", &raw_error));
+                state.visible = manual;
+                state.manual = manual;
+            })
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn install_update(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, TauriAppState>,
+) -> Result<UpdateStateDto, String> {
+    let Some(_guard) = reserve_update_operation(&state.update_busy) else {
+        return current_update_state(&state.update_runtime);
+    };
+    let update = {
+        let mut runtime = state
+            .update_runtime
+            .lock()
+            .map_err(|_| "update runtime lock poisoned".to_string())?;
+        let Some(update) = runtime.pending_update.clone() else {
+            runtime.state.status = AppUpdateStatus::Error;
+            runtime.state.error =
+                Some("설치할 대기 업데이트가 없습니다. 업데이트를 다시 확인하세요.".to_string());
+            runtime.state.visible = true;
+            runtime.state.manual = true;
+            let dto = update_state_dto(&runtime.state);
+            drop(runtime);
+            let _ = app_handle.emit("update-state-changed", &dto);
+            return Ok(dto);
+        };
+        runtime.state.status = AppUpdateStatus::Installing;
+        runtime.state.current_version = update.current_version.clone();
+        runtime.state.version = Some(update.version.clone());
+        runtime.state.date = update.date.as_ref().map(|date| date.to_string());
+        runtime.state.body = update.body.clone();
+        runtime.state.downloaded_bytes = 0;
+        runtime.state.content_length = None;
+        runtime.state.error = None;
+        runtime.state.visible = true;
+        runtime.state.manual = true;
+        let dto = update_state_dto(&runtime.state);
+        drop(runtime);
+        let _ = app_handle.emit("update-state-changed", &dto);
+        update
+    };
+
+    let progress_app = app_handle.clone();
+    let progress_runtime = state.update_runtime.clone();
+    let mut downloaded_bytes = 0u64;
+    let mut last_progress_emit = Instant::now() - Duration::from_millis(250);
+    let download_result = update
+        .download_and_install(
+            move |chunk_length, content_length| {
+                downloaded_bytes = downloaded_bytes.saturating_add(chunk_length as u64);
+                if let Ok(mut runtime) = progress_runtime.lock() {
+                    runtime.state.downloaded_bytes = downloaded_bytes;
+                    runtime.state.content_length = content_length;
+                }
+                if last_progress_emit.elapsed() >= Duration::from_millis(250) {
+                    last_progress_emit = Instant::now();
+                    emit_update_state(&progress_app, &progress_runtime);
+                }
+            },
+            {
+                let finish_app = app_handle.clone();
+                let finish_runtime = state.update_runtime.clone();
+                move || {
+                    emit_update_state(&finish_app, &finish_runtime);
+                }
+            },
+        )
+        .await;
+
+    match download_result {
+        Ok(()) => mutate_update_runtime(&app_handle, &state.update_runtime, |runtime| {
+            runtime.pending_update = None;
+            let state = &mut runtime.state;
+            state.status = AppUpdateStatus::Installed;
+            state.current_version = update.current_version.clone();
+            state.version = Some(update.version.clone());
+            state.date = update.date.as_ref().map(|date| date.to_string());
+            state.body = update.body.clone();
+            state.error = None;
+            state.visible = true;
+            state.manual = true;
+        }),
+        Err(error) => {
+            let raw_error = error.to_string();
+            tracing::warn!(error = %raw_error, "update install failed");
+            mutate_update_runtime(&app_handle, &state.update_runtime, |runtime| {
+                let state = &mut runtime.state;
+                state.status = AppUpdateStatus::Error;
+                state.current_version = update.current_version.clone();
+                state.version = Some(update.version.clone());
+                state.date = update.date.as_ref().map(|date| date.to_string());
+                state.body = update.body.clone();
+                state.error = Some(actionable_update_error("업데이트 설치에", &raw_error));
+                state.visible = true;
+                state.manual = true;
+            })
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn restart_app(app_handle: tauri::AppHandle) -> Result<(), String> {
+    app_handle.request_restart();
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn start_server(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, TauriAppState>,
@@ -547,10 +911,28 @@ pub async fn get_settings(
         .await
         .map_err(|e| e.to_string())?;
 
-    Ok(rows
+    let mut settings = rows
         .into_iter()
         .map(|(key, value)| SettingDto { key, value })
-        .collect())
+        .collect::<Vec<_>>();
+
+    let effective_port = state
+        .server_status
+        .lock()
+        .map_err(|_| "server status lock poisoned".to_string())?
+        .port
+        .to_string();
+
+    if let Some(port_setting) = settings.iter_mut().find(|setting| setting.key == "port") {
+        port_setting.value = effective_port;
+    } else {
+        settings.push(SettingDto {
+            key: "port".to_string(),
+            value: effective_port,
+        });
+    }
+
+    Ok(settings)
 }
 
 #[tauri::command]
@@ -805,4 +1187,118 @@ pub async fn get_models(_state: tauri::State<'_, TauriAppState>) -> Result<Vec<M
             }
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_state_dto_hides_idle_state() {
+        let state = AppUpdateState::idle("1.1.0");
+        let dto = update_state_dto(&state);
+
+        assert_eq!(dto.status, "idle");
+        assert_eq!(dto.current_version, "1.1.0");
+        assert!(!dto.visible);
+        assert!(dto.version.is_none());
+    }
+
+    #[test]
+    fn manual_check_error_is_visible_and_actionable() {
+        let mut state = AppUpdateState::idle("1.1.0");
+        state.status = AppUpdateStatus::Error;
+        state.error = Some(actionable_update_error(
+            "업데이트 확인에",
+            "metadata signature is invalid",
+        ));
+        state.visible = true;
+        state.manual = true;
+
+        let dto = update_state_dto(&state);
+
+        assert_eq!(dto.status, "error");
+        assert!(dto.visible);
+        assert!(dto.manual);
+        let message = dto.error.expect("error message");
+        assert!(message.contains("GitHub Release"));
+        assert!(message.contains("metadata signature is invalid"));
+    }
+
+    #[test]
+    fn background_check_error_can_remain_silent() {
+        let mut state = AppUpdateState::idle("1.1.0");
+        state.status = AppUpdateStatus::Error;
+        state.error = Some(actionable_update_error("업데이트 확인에", "HTTP 404"));
+        state.visible = false;
+        state.manual = false;
+
+        let dto = update_state_dto(&state);
+
+        assert_eq!(dto.status, "error");
+        assert!(!dto.visible);
+        assert!(!dto.manual);
+    }
+
+    #[test]
+    fn update_operation_guard_allows_one_operation_at_a_time() {
+        let busy = Arc::new(AtomicBool::new(false));
+        let guard = reserve_update_operation(&busy).expect("first operation");
+
+        assert!(reserve_update_operation(&busy).is_none());
+        drop(guard);
+        assert!(reserve_update_operation(&busy).is_some());
+    }
+
+    #[test]
+    fn updater_endpoint_override_ignores_missing_or_empty_value() {
+        assert!(parse_updater_endpoint_override(None).unwrap().is_none());
+        assert!(parse_updater_endpoint_override(Some("   "))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn updater_endpoint_override_accepts_https_urls() {
+        let endpoint = parse_updater_endpoint_override(Some(
+            " https://github.com/pelogvc/oorouter/releases/download/test/latest.json ",
+        ))
+        .unwrap()
+        .expect("endpoint");
+
+        assert_eq!(
+            endpoint.as_str(),
+            "https://github.com/pelogvc/oorouter/releases/download/test/latest.json"
+        );
+    }
+
+    #[test]
+    fn updater_endpoint_override_accepts_latest_release_url() {
+        let endpoint = parse_updater_endpoint_override(Some(
+            "https://github.com/pelogvc/oorouter/releases/latest/download/latest.json",
+        ))
+        .unwrap()
+        .expect("endpoint");
+
+        assert_eq!(
+            endpoint.as_str(),
+            "https://github.com/pelogvc/oorouter/releases/latest/download/latest.json"
+        );
+    }
+
+    #[test]
+    fn updater_endpoint_override_rejects_invalid_values() {
+        assert!(parse_updater_endpoint_override(Some("not a url")).is_err());
+        assert!(
+            parse_updater_endpoint_override(Some("http://localhost:8000/latest.json")).is_err()
+        );
+        assert!(parse_updater_endpoint_override(Some("file:///tmp/latest.json")).is_err());
+        assert!(
+            parse_updater_endpoint_override(Some("https://example.com/test/latest.json")).is_err()
+        );
+        assert!(parse_updater_endpoint_override(Some(
+            "https://github.com/pelogvc/other/releases/download/test/latest.json"
+        ))
+        .is_err());
+    }
 }

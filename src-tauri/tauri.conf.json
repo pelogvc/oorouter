@@ -30,6 +30,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -39,6 +40,14 @@
     ],
     "macOS": {
       "dmg": {}
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVBOUFFOTBDNjRCQjlEMEYKUldRUG5idGtET21hNnVEOG9VRW1UVTcwY3JIYUpqVXlxUFk2UjNvM1hSUklPSGo4RFppdS8wVDgK",
+      "endpoints": [
+        "https://github.com/pelogvc/oorouter/releases/latest/download/latest.json"
+      ]
     }
   }
 }

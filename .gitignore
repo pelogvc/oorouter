@@ -5,6 +5,7 @@ node_modules/
 dist/
 target/
 debug/
+tsconfig.tsbuildinfo
 
 # Rust
 **/*.rs.bk
@@ -47,3 +48,6 @@ src-tauri/gen/
 .claude
 .sisyphus
 skills-lock.json
+.scratch
+docs
+CONTEXT.md

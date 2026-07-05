@@ -80,9 +80,22 @@ jobs:
           fi
 
       - if: steps.resolve-tag.outputs.tag != ''
-        uses: tauri-apps/tauri-action@v0
+        name: Verify updater signing secret
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error title=Missing updater signing key::Set the TAURI_SIGNING_PRIVATE_KEY repository secret before running the release workflow. Generate it with: cargo tauri signer generate --ci -w ~/.tauri/oorouter-updater.key"
+            exit 1
+          fi
+
+      - if: steps.resolve-tag.outputs.tag != ''
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ steps.resolve-tag.outputs.tag }}
           releaseName: oorouter ${{ steps.resolve-tag.outputs.tag }}

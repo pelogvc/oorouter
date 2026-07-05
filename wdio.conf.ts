@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -23,6 +24,23 @@ fs.writeFileSync(authPath, JSON.stringify({ OPENAI_API_KEY: "sk-proj-wdio-test" 
 
 function appendViteLog(chunk: Buffer) {
   viteLogs = `${viteLogs}${chunk.toString()}`.slice(-4000);
+}
+
+async function assertVitePortAvailable() {
+  await new Promise<void>((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "EADDRINUSE") {
+        reject(new Error(`${viteUrl} is already in use. Stop the existing Vite server before running e2e.`));
+      } else {
+        reject(error);
+      }
+    });
+    server.once("listening", () => {
+      server.close(() => resolve());
+    });
+    server.listen(1420, "127.0.0.1");
+  });
 }
 
 async function waitForViteServer() {
@@ -66,6 +84,7 @@ export const config: Options.Testrunner = {
           XDG_DATA_HOME: dataHome,
           PORT: proxyPort,
           LOG_LEVEL: "error",
+          OOROUTER_DISABLE_STARTUP_UPDATE_CHECK: "true",
         },
       },
     ],
@@ -89,12 +108,16 @@ export const config: Options.Testrunner = {
     timeout: 90000,
   },
   onPrepare: async () => {
+    await assertVitePortAvailable();
     viteServer = spawn(
       viteBin,
       ["--host", "127.0.0.1", "--port", "1420", "--strictPort", "--mode", "wdio"],
       {
         cwd: rootDir,
-        env: process.env,
+        env: {
+          ...process.env,
+          VITE_WDIO: "true",
+        },
         stdio: ["ignore", "pipe", "pipe"],
       }
     );

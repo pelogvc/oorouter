@@ -87,5 +87,40 @@ describe("Tauri embedded WebDriver smoke", () => {
     expect(status).toHaveProperty("running");
     expect(status).toHaveProperty("port", 19134);
     expect(status).toHaveProperty("auth_mode", "ApiKey");
+
+    const settings = await browser.tauri.execute(
+      "window.__TAURI__.core.invoke('get_settings')",
+      mainWindow
+    );
+    expect(settings).toContainEqual({ key: "port", value: "19134" });
+
+    await browser.tauri.execute(
+      `Array.from(document.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("Settings"))
+        ?.click()`,
+      mainWindow
+    );
+    await browser.waitUntil(
+      async () => {
+        const text = await browser.tauri.execute("document.body.innerText", mainWindow);
+        return String(text).includes("Proxy listen port");
+      },
+      {
+        timeout: 5000,
+        timeoutMsg: "settings page did not render",
+      }
+    );
+    const visiblePort = await browser.tauri.execute(
+      `document.querySelector('input[type="number"]')?.value`,
+      mainWindow
+    );
+    expect(visiblePort).toBe("19134");
+
+    const updateState = await browser.tauri.execute(
+      "window.__TAURI__.core.invoke('get_update_state')",
+      mainWindow
+    );
+    expect(updateState).toHaveProperty("status", "idle");
+    expect(updateState).toHaveProperty("visible", false);
   });
 });

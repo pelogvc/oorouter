@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App.tsx";
 
-if (import.meta.env.MODE === "wdio") {
+if (import.meta.env.MODE === "wdio" || import.meta.env.VITE_WDIO === "true") {
   void import("@wdio/tauri-plugin");
 }
 

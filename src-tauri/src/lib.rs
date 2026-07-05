@@ -1,19 +1,19 @@
 mod commands;
 mod state;
 
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{atomic::AtomicBool, Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Listener, Manager, RunEvent, WindowEvent,
+    Emitter, Listener, Manager, RunEvent, WindowEvent, RESTART_EXIT_CODE,
 };
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_positioner::{Position, WindowExt};
 
-use crate::state::{ServerStatus, TauriAppState};
+use crate::state::{AppUpdateRuntimeState, ServerStatus, TauriAppState};
 
 static ERROR_ICON_RGBA: LazyLock<Vec<u8>> = LazyLock::new(|| {
     let mut rgba = vec![0u8; 32 * 32 * 4];
@@ -384,7 +384,11 @@ pub fn run() {
             commands::update_setting,
             commands::get_recent_logs,
             commands::get_token_usage,
-            commands::get_models
+            commands::get_models,
+            commands::get_update_state,
+            commands::check_for_updates,
+            commands::install_update,
+            commands::restart_app
         ])
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_notification::init())
@@ -392,7 +396,8 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .plugin(tauri_plugin_shell::init());
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build());
 
     #[cfg(debug_assertions)]
     let builder = builder
@@ -586,6 +591,10 @@ pub fn run() {
                 server_stopping: Arc::new(Mutex::new(false)),
                 shared_auth,
                 auth_watcher: Arc::new(Mutex::new(auth_watcher)),
+                update_runtime: Arc::new(Mutex::new(AppUpdateRuntimeState::idle(
+                    app.package_info().version.to_string(),
+                ))),
+                update_busy: Arc::new(AtomicBool::new(false)),
             });
 
             let state = app.state::<TauriAppState>();
@@ -600,6 +609,11 @@ pub fn run() {
             );
 
             spawn_log_event_bridge(app.app_handle().clone(), proxy_state.clone());
+            commands::spawn_startup_update_check(
+                app.app_handle().clone(),
+                state.update_runtime.clone(),
+                state.update_busy.clone(),
+            );
 
             let auto_start_enabled = tokio::runtime::Runtime::new()
                 .ok()
@@ -621,8 +635,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build tauri application")
         .run(|_app, event| {
-            if let RunEvent::ExitRequested { api, .. } = event {
-                api.prevent_exit();
+            if let RunEvent::ExitRequested { api, code, .. } = event {
+                if code != Some(RESTART_EXIT_CODE) {
+                    api.prevent_exit();
+                }
             }
         });
 }

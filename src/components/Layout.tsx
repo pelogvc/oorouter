@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useTheme, type Theme } from "@/lib/use-theme";
 import { getServerStatus, listen } from "@/lib/tauri";
+import { UpdateBanner } from "@/components/UpdateBanner";
 import { Badge } from "@/components/ui/badge";
 import {
   Home,
@@ -171,6 +172,7 @@ export function Layout({ activeTab, onTabChange, children }: LayoutProps) {
           </Badge>
         </header>
 
+        <UpdateBanner />
         <main className="flex-1 overflow-auto">{children}</main>
       </div>
     </div>

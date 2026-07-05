@@ -1,15 +1,25 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  checkForUpdates,
   getServerStatus,
   getSettings,
   isTauriRuntime,
   listen,
   updateSetting,
 } from "@/lib/tauri";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { AlertCircle, FileKey2, Gauge, Power, SlidersHorizontal } from "lucide-react";
+import {
+  AlertCircle,
+  Download,
+  FileKey2,
+  Gauge,
+  Power,
+  RefreshCw,
+  SlidersHorizontal,
+} from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -62,6 +72,8 @@ export default function Settings() {
   const [portChanged, setPortChanged] = useState(false);
   const [authPathChanged, setAuthPathChanged] = useState(false);
   const [error, setError] = useState<SettingsError | null>(null);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [updateCheckMessage, setUpdateCheckMessage] = useState<string | null>(null);
   const dirtyRef = useRef<Record<"port" | "auth_path", boolean>>({
     port: false,
     auth_path: false,
@@ -72,6 +84,7 @@ export default function Settings() {
     auto_start: 0,
     log_level: 0,
   });
+  const mountedRef = useRef(true);
   const canEditSettings = isTauriRuntime();
   const runtimeSettingsLocked = canEditSettings && serverRunning;
   const runtimeInputDisabled = !canEditSettings || runtimeSettingsLocked;
@@ -81,6 +94,13 @@ export default function Settings() {
   } else if (!canEditSettings) {
     settingsHeaderBadge = "Read only";
   }
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -132,7 +152,13 @@ export default function Settings() {
       try {
         const status = await getServerStatus();
         if (active) {
+          const nextPort = String(status.port);
           setServerRunning(status.running);
+          if (!dirtyRef.current.port) {
+            setSettings((prev) => ({ ...prev, port: nextPort }));
+            setSavedPort(nextPort);
+            setPortChanged(false);
+          }
         }
       } catch {
         if (active) {
@@ -230,6 +256,39 @@ export default function Settings() {
         message: getErrorMessage(err),
       });
       return false;
+    }
+  };
+
+  const checkUpdates = async () => {
+    setCheckingUpdates(true);
+    setUpdateCheckMessage(null);
+    try {
+      const result = await checkForUpdates(true);
+      if (!mountedRef.current) return;
+      if (result.status === "available" && result.version) {
+        setUpdateCheckMessage(`Version ${result.version} is available.`);
+      } else if (result.status === "error") {
+        setUpdateCheckMessage(
+          result.error ??
+            "Update check failed. Please try again or install the latest release manually."
+        );
+      } else if (result.status === "checking") {
+        setUpdateCheckMessage("Update check is already in progress.");
+      } else if (result.status === "installing") {
+        setUpdateCheckMessage("Update installation is in progress.");
+      } else if (result.status === "installed") {
+        setUpdateCheckMessage("Update installed. Restart the app to finish applying it.");
+      } else {
+        setUpdateCheckMessage("Up to date.");
+      }
+    } catch (err) {
+      if (mountedRef.current) {
+        setUpdateCheckMessage(getErrorMessage(err));
+      }
+    } finally {
+      if (mountedRef.current) {
+        setCheckingUpdates(false);
+      }
     }
   };
 
@@ -336,6 +395,35 @@ export default function Settings() {
                 });
               }}
             />
+          </div>
+
+          <div className="grid grid-cols-[180px_minmax(0,1fr)] items-center gap-4 p-4">
+            <div className="min-w-0">
+              <label className="flex items-center gap-2 text-sm font-medium text-foreground">
+                <Download className="h-4 w-4 text-muted-foreground" />
+                Updates
+              </label>
+              <p className="mt-1 text-xs text-muted-foreground">GitHub Releases channel</p>
+            </div>
+            <div className="flex min-w-0 items-center gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void checkUpdates()}
+                disabled={!canEditSettings || checkingUpdates}
+              >
+                <RefreshCw
+                  className={`mr-2 h-3.5 w-3.5 ${checkingUpdates ? "animate-spin" : ""}`}
+                />
+                Check
+              </Button>
+              {updateCheckMessage && (
+                <span className="truncate text-xs text-muted-foreground">
+                  {updateCheckMessage}
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-[180px_minmax(0,1fr)] items-center gap-4 p-4">
