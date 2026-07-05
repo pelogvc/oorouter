@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/pelogvc/oorouter/compare/v1.1.0...v1.1.1) (2026-07-05)
+
+
+### Bug Fixes
+
+* add auto update ([615a1ed](https://github.com/pelogvc/oorouter/commit/615a1ed2b5e7d777c88f4b0798d1940f99641209))
+
 # [1.1.0](https://github.com/pelogvc/oorouter/compare/v1.0.0...v1.1.0) (2026-07-02)
 
 
