@@ -64,7 +64,19 @@ export function Layout({ activeTab, onTabChange, children }: LayoutProps) {
   }, []);
 
   const activeLabel = TABS.find((t) => t.id === activeTab)?.label;
-  const statusLabel = status.running ? "Online" : status.error ? "Error" : "Offline";
+  const statusTone = status.running ? "online" : status.error ? "error" : "offline";
+  const statusLabel =
+    statusTone === "online" ? "Online" : statusTone === "error" ? "Error" : "Offline";
+  const statusDotClass = {
+    online: "text-success",
+    error: "text-destructive-text",
+    offline: "text-muted-foreground",
+  }[statusTone];
+  const statusBadgeClass = {
+    online: "border-success/30 bg-success/10 text-success",
+    error: "border-destructive-text/30 bg-destructive-text/10 text-destructive-text",
+    offline: "text-muted-foreground",
+  }[statusTone];
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background text-foreground">
@@ -76,8 +88,8 @@ export function Layout({ activeTab, onTabChange, children }: LayoutProps) {
             </svg>
           </div>
           <div className="min-w-0">
-            <div className="truncate text-sm font-semibold leading-5">oorouter</div>
-            <div className="text-[11px] font-medium uppercase text-muted-foreground">
+            <div className="truncate text-sm font-semibold leading-5 tracking-tight">oorouter</div>
+            <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
               local proxy
             </div>
           </div>
@@ -91,14 +103,21 @@ export function Layout({ activeTab, onTabChange, children }: LayoutProps) {
               <button
                 key={tab.id}
                 onClick={() => onTabChange(tab.id)}
+                aria-current={isActive ? "page" : undefined}
                 className={cn(
-                  "flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-[13px] font-medium transition-colors duration-150",
+                  "relative flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-[13px] font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   isActive
                     ? "bg-accent text-accent-foreground"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground"
                 )}
               >
-                <Icon className="w-4 h-4 shrink-0" />
+                {isActive && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute bottom-2 left-0 top-2 w-0.5 rounded-full bg-primary"
+                  />
+                )}
+                <Icon className="w-4 h-4 shrink-0" aria-hidden="true" />
                 {tab.label}
               </button>
             );
@@ -111,33 +130,34 @@ export function Layout({ activeTab, onTabChange, children }: LayoutProps) {
               <button
                 key={value}
                 onClick={() => setTheme(value)}
+                aria-label={`${value} theme`}
+                aria-pressed={theme === value}
                 className={cn(
-                  "flex h-7 items-center justify-center rounded-sm transition-colors duration-150",
+                  "flex h-7 items-center justify-center rounded-sm transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   theme === value
                     ? "bg-background text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
-                <Icon className="w-3.5 h-3.5" />
+                <Icon className="w-3.5 h-3.5" aria-hidden="true" />
               </button>
             ))}
           </div>
 
-          <div className="rounded-md border bg-background px-2.5 py-2">
+          <div className="rounded-md border bg-background px-2.5 py-2" role="status" aria-live="polite">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[11px] font-medium uppercase text-muted-foreground">
+              <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                 Server
               </span>
-              <Circle
-                className={cn(
-                  "h-2.5 w-2.5 shrink-0 fill-current",
-                  status.running
-                    ? "text-emerald-500"
-                    : status.error
-                      ? "text-destructive"
-                      : "text-muted-foreground"
+              <span className="relative flex h-2.5 w-2.5 shrink-0">
+                {status.running && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-30 [animation-duration:2.5s] motion-reduce:hidden"
+                  />
                 )}
-              />
+                <Circle aria-hidden="true" className={cn("h-2.5 w-2.5 fill-current", statusDotClass)} />
+              </span>
             </div>
             <div className="mt-1 truncate text-sm font-semibold">{statusLabel}</div>
           </div>
@@ -150,24 +170,11 @@ export function Layout({ activeTab, onTabChange, children }: LayoutProps) {
           <Badge
             variant="outline"
             className={cn(
-              "h-6 rounded-md px-2 text-[10px] font-semibold uppercase",
-              status.running
-                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                : status.error
-                  ? "border-destructive/30 bg-destructive/10 text-destructive"
-                  : "text-muted-foreground"
+              "h-6 rounded-md px-2 text-[10px] font-semibold uppercase tracking-wide",
+              statusBadgeClass
             )}
           >
-            <Circle
-              className={cn(
-                "mr-1.5 h-1.5 w-1.5 fill-current",
-                status.running
-                  ? "text-emerald-500"
-                  : status.error
-                    ? "text-destructive"
-                    : "text-muted-foreground"
-              )}
-            />
+            <Circle aria-hidden="true" className={cn("mr-1.5 h-1.5 w-1.5 fill-current", statusDotClass)} />
             {statusLabel}
           </Badge>
         </header>

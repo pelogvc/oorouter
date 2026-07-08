@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertCircle,
   Download,
@@ -18,6 +20,7 @@ import {
   Gauge,
   Power,
   RefreshCw,
+  ShieldCheck,
   SlidersHorizontal,
 } from "lucide-react";
 import {
@@ -69,6 +72,8 @@ export default function Settings() {
   const [savedPort, setSavedPort] = useState(DEFAULT_SETTINGS.port);
   const [savedAuthPath, setSavedAuthPath] = useState(DEFAULT_SETTINGS.auth_path);
   const [serverRunning, setServerRunning] = useState(false);
+  const [authMode, setAuthMode] = useState("");
+  const [tab, setTab] = useState<"general" | "codex">("general");
   const [portChanged, setPortChanged] = useState(false);
   const [authPathChanged, setAuthPathChanged] = useState(false);
   const [error, setError] = useState<SettingsError | null>(null);
@@ -154,6 +159,7 @@ export default function Settings() {
         if (active) {
           const nextPort = String(status.port);
           setServerRunning(status.running);
+          setAuthMode(status.auth_mode);
           if (!dirtyRef.current.port) {
             setSettings((prev) => ({ ...prev, port: nextPort }));
             setSavedPort(nextPort);
@@ -192,6 +198,11 @@ export default function Settings() {
       prev?.key === "port" || prev?.key === "auth_path" ? null : prev
     ));
   }, [runtimeSettingsLocked, savedPort, savedAuthPath]);
+
+  useEffect(() => {
+    if (!error) return;
+    setTab(error.key === "auth_path" ? "codex" : "general");
+  }, [error]);
 
   const save = async (key: keyof SettingsState, value: string): Promise<boolean> => {
     if ((key === "port" || key === "auth_path") && runtimeSettingsLocked) {
@@ -292,165 +303,207 @@ export default function Settings() {
     }
   };
 
+  const generalError = error && error.key !== "auth_path" ? error : null;
+  const codexError = error && error.key === "auth_path" ? error : null;
+
   return (
-    <div className="flex h-full flex-col gap-3 p-4">
-      <div className="flex h-10 shrink-0 items-center justify-between rounded-lg border bg-card px-4">
-        <div className="flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
-          <SlidersHorizontal className="h-3.5 w-3.5" />
-          Settings
-        </div>
+    <Tabs
+      value={tab}
+      onValueChange={(value) => setTab(value as "general" | "codex")}
+      className="flex h-full flex-col gap-3 p-4"
+    >
+      <div className="flex h-11 shrink-0 items-center justify-between rounded-lg border bg-card px-2">
+        <TabsList>
+          <TabsTrigger value="general">
+            <SlidersHorizontal aria-hidden="true" className="h-3.5 w-3.5" />
+            General
+          </TabsTrigger>
+          <TabsTrigger value="codex">
+            <FileKey2 aria-hidden="true" className="h-3.5 w-3.5" />
+            Codex
+          </TabsTrigger>
+        </TabsList>
         {settingsHeaderBadge && (
-          <span className="text-[11px] font-medium text-muted-foreground">
+          <span className="pr-2 text-[11px] font-medium text-muted-foreground">
             {settingsHeaderBadge}
           </span>
         )}
       </div>
 
-      <Card className="min-h-0 flex-1 overflow-hidden">
-        <CardContent className="p-0 divide-y divide-border">
-          {error && (
-            <div className="flex items-center gap-2 bg-destructive/10 px-4 py-3 text-xs text-destructive">
-              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-              {error.message}
-            </div>
-          )}
-          <div className="grid grid-cols-[180px_minmax(0,1fr)] items-center gap-4 p-4">
-            <div className="min-w-0">
-              <label className="flex items-center gap-2 text-sm font-medium text-foreground">
-                <Gauge className="h-4 w-4 text-muted-foreground" />
-                Port
-              </label>
-              <p className="mt-1 text-xs text-muted-foreground">Proxy listen port</p>
-            </div>
-            <Input
-              type="number"
-              min={1}
-              max={65535}
-              value={settings.port}
-              onChange={(e) => {
-                setSettings((prev) => ({ ...prev, port: e.target.value }));
-                dirtyRef.current.port = true;
-                setPortChanged(true);
-              }}
-              onBlur={() => void save("port", settings.port)}
-              disabled={runtimeInputDisabled}
-              className="w-32 font-mono"
-            />
-            {portChanged && (
-              <p className="col-start-2 flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
-                <AlertCircle className="h-3 w-3 shrink-0" />
-                Restart required for port change
-              </p>
+      <TabsContent value="general" className="min-h-0 flex-1">
+        <Card className="h-full overflow-hidden">
+          <CardContent className="p-0 divide-y divide-border">
+            {generalError && (
+              <div role="alert" className="flex items-center gap-2 bg-destructive-text/10 px-4 py-3 text-xs text-destructive-text">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                {generalError.message}
+              </div>
             )}
-          </div>
-
-          <div className="grid grid-cols-[180px_minmax(0,1fr)] items-center gap-4 p-4">
-            <div className="min-w-0">
-              <label className="flex items-center gap-2 text-sm font-medium text-foreground">
-                <FileKey2 className="h-4 w-4 text-muted-foreground" />
-                Auth File
-              </label>
-              <p className="mt-1 text-xs text-muted-foreground">Codex credential path</p>
-            </div>
-            <Input
-              type="text"
-              value={settings.auth_path}
-              onChange={(e) => {
-                setSettings((prev) => ({ ...prev, auth_path: e.target.value }));
-                dirtyRef.current.auth_path = true;
-                setAuthPathChanged(true);
-              }}
-              onBlur={() => void save("auth_path", settings.auth_path)}
-              disabled={runtimeInputDisabled}
-              className="font-mono text-xs"
-              placeholder="~/.codex/auth.json"
-            />
-            {authPathChanged && (
-              <p className="col-start-2 flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
-                <AlertCircle className="h-3 w-3 shrink-0" />
-                Auth file updated
-              </p>
-            )}
-          </div>
-
-          <div className="grid grid-cols-[180px_minmax(0,1fr)] items-center gap-4 p-4">
-            <div className="min-w-0">
-              <label className="flex items-center gap-2 text-sm font-medium text-foreground">
-                <Power className="h-4 w-4 text-muted-foreground" />
-                Auto Start
-              </label>
-              <p className="mt-1 text-xs text-muted-foreground">Launch at login</p>
-            </div>
-            <Switch
-              checked={settings.auto_start === "true"}
-              disabled={!canEditSettings}
-              onCheckedChange={(checked) => {
-                const value = checked ? "true" : "false";
-                const previousValue = settings.auto_start;
-                setSettings((prev) => ({ ...prev, auto_start: value }));
-                void save("auto_start", value).then((saved) => {
-                  if (!saved) {
-                    setSettings((prev) => ({ ...prev, auto_start: previousValue }));
-                  }
-                });
-              }}
-            />
-          </div>
-
-          <div className="grid grid-cols-[180px_minmax(0,1fr)] items-center gap-4 p-4">
-            <div className="min-w-0">
-              <label className="flex items-center gap-2 text-sm font-medium text-foreground">
-                <Download className="h-4 w-4 text-muted-foreground" />
-                Updates
-              </label>
-              <p className="mt-1 text-xs text-muted-foreground">GitHub Releases channel</p>
-            </div>
-            <div className="flex min-w-0 items-center gap-3">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => void checkUpdates()}
-                disabled={!canEditSettings || checkingUpdates}
-              >
-                <RefreshCw
-                  className={`mr-2 h-3.5 w-3.5 ${checkingUpdates ? "animate-spin" : ""}`}
-                />
-                Check
-              </Button>
-              {updateCheckMessage && (
-                <span className="truncate text-xs text-muted-foreground">
-                  {updateCheckMessage}
-                </span>
+            <div className="grid grid-cols-[180px_minmax(0,1fr)] items-center gap-4 p-4">
+              <div className="min-w-0">
+                <label htmlFor="setting-port" className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <Gauge className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                  Port
+                </label>
+                <p className="mt-1 text-xs text-muted-foreground">Proxy listen port</p>
+              </div>
+              <Input
+                id="setting-port"
+                type="number"
+                min={1}
+                max={65535}
+                value={settings.port}
+                onChange={(e) => {
+                  setSettings((prev) => ({ ...prev, port: e.target.value }));
+                  dirtyRef.current.port = true;
+                  setPortChanged(true);
+                }}
+                onBlur={() => void save("port", settings.port)}
+                disabled={runtimeInputDisabled}
+                className="w-32 font-mono"
+              />
+              {portChanged && (
+                <p className="col-start-2 flex items-center gap-1.5 text-xs text-warning">
+                  <AlertCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
+                  Restart required for port change
+                </p>
               )}
             </div>
-          </div>
 
-          <div className="grid grid-cols-[180px_minmax(0,1fr)] items-center gap-4 p-4">
-            <div className="min-w-0">
-              <label className="flex items-center gap-2 text-sm font-medium text-foreground">
-                <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
-                Log Level
-              </label>
-              <p className="mt-1 text-xs text-muted-foreground">Server log verbosity</p>
+            <div className="grid grid-cols-[180px_minmax(0,1fr)] items-center gap-4 p-4">
+              <div className="min-w-0">
+                <label htmlFor="setting-auto-start" className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <Power className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                  Auto Start
+                </label>
+                <p className="mt-1 text-xs text-muted-foreground">Launch at login</p>
+              </div>
+              <Switch
+                id="setting-auto-start"
+                aria-label="Launch at login"
+                checked={settings.auto_start === "true"}
+                disabled={!canEditSettings}
+                onCheckedChange={(checked) => {
+                  const value = checked ? "true" : "false";
+                  const previousValue = settings.auto_start;
+                  setSettings((prev) => ({ ...prev, auto_start: value }));
+                  void save("auto_start", value).then((saved) => {
+                    if (!saved) {
+                      setSettings((prev) => ({ ...prev, auto_start: previousValue }));
+                    }
+                  });
+                }}
+              />
             </div>
-            <Select
-              value={settings.log_level}
-              disabled
-            >
-              <SelectTrigger className="w-32">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="debug">debug</SelectItem>
-                <SelectItem value="info">info</SelectItem>
-                <SelectItem value="warn">warn</SelectItem>
-                <SelectItem value="error">error</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+
+            <div className="grid grid-cols-[180px_minmax(0,1fr)] items-center gap-4 p-4">
+              <div className="min-w-0">
+                <label className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <Download className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                  Updates
+                </label>
+                <p className="mt-1 text-xs text-muted-foreground">GitHub Releases channel</p>
+              </div>
+              <div className="flex min-w-0 items-center gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void checkUpdates()}
+                  disabled={!canEditSettings || checkingUpdates}
+                >
+                  <RefreshCw
+                    aria-hidden="true"
+                    className={`mr-2 h-3.5 w-3.5 ${checkingUpdates ? "animate-spin motion-reduce:animate-none" : ""}`}
+                  />
+                  Check
+                </Button>
+                {updateCheckMessage && (
+                  <span className="truncate text-xs text-muted-foreground">
+                    {updateCheckMessage}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-[180px_minmax(0,1fr)] items-center gap-4 p-4">
+              <div className="min-w-0">
+                <label htmlFor="setting-log-level" className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <SlidersHorizontal className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                  Log Level
+                </label>
+                <p className="mt-1 text-xs text-muted-foreground">Server log verbosity</p>
+              </div>
+              <Select value={settings.log_level} disabled>
+                <SelectTrigger id="setting-log-level" aria-label="Log level" className="w-32">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="debug">debug</SelectItem>
+                  <SelectItem value="info">info</SelectItem>
+                  <SelectItem value="warn">warn</SelectItem>
+                  <SelectItem value="error">error</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
+      </TabsContent>
+
+      <TabsContent value="codex" className="min-h-0 flex-1">
+        <Card className="h-full overflow-hidden">
+          <CardContent className="p-0 divide-y divide-border">
+            {codexError && (
+              <div role="alert" className="flex items-center gap-2 bg-destructive-text/10 px-4 py-3 text-xs text-destructive-text">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                {codexError.message}
+              </div>
+            )}
+            <div className="grid grid-cols-[180px_minmax(0,1fr)] items-center gap-4 p-4">
+              <div className="min-w-0">
+                <label htmlFor="setting-auth-path" className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <FileKey2 className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                  Auth File
+                </label>
+                <p className="mt-1 text-xs text-muted-foreground">Codex credential path</p>
+              </div>
+              <Input
+                id="setting-auth-path"
+                type="text"
+                value={settings.auth_path}
+                onChange={(e) => {
+                  setSettings((prev) => ({ ...prev, auth_path: e.target.value }));
+                  dirtyRef.current.auth_path = true;
+                  setAuthPathChanged(true);
+                }}
+                onBlur={() => void save("auth_path", settings.auth_path)}
+                disabled={runtimeInputDisabled}
+                className="font-mono text-xs"
+                placeholder="~/.codex/auth.json"
+              />
+              {authPathChanged && (
+                <p className="col-start-2 flex items-center gap-1.5 text-xs text-warning">
+                  <AlertCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
+                  Auth file updated
+                </p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-[180px_minmax(0,1fr)] items-center gap-4 p-4">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <ShieldCheck className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                  Mode
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">Resolved credential type</p>
+              </div>
+              <Badge variant="outline" className="h-6 w-fit rounded-md px-2 font-mono text-[11px]">
+                {authMode || "—"}
+              </Badge>
+            </div>
+          </CardContent>
+        </Card>
+      </TabsContent>
+    </Tabs>
   );
 }

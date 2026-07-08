@@ -259,9 +259,9 @@ fn spawn_server_exit_monitor(
     exit_rx: tokio::sync::oneshot::Receiver<String>,
 ) {
     tauri::async_runtime::spawn(async move {
-        let Ok(message) = exit_rx.await else {
-            return;
-        };
+        let message = exit_rx
+            .await
+            .unwrap_or_else(|_| "서버 태스크가 예기치 않게 종료됨".to_string());
         if !is_current_server_generation(&server_generation, startup_generation) {
             return;
         }
@@ -271,6 +271,32 @@ fn spawn_server_exit_monitor(
             .map(|status| status.running)
             .unwrap_or(false);
         if !was_running {
+            // get_server_status의 reconcile이 먼저 상태를 교정한 경우,
+            // 일반 메시지 대신 실제 종료 메시지를 보존하고 알림을 발행한다.
+            // generation 락을 쥔 채 갱신해 새 서버 시작과의 경합을 배제한다.
+            let repaired_early = {
+                let Ok(generation_guard) = server_generation.lock() else {
+                    return;
+                };
+                if *generation_guard != startup_generation {
+                    return;
+                }
+                server_status
+                    .lock()
+                    .map(|mut status| {
+                        if status.error.is_some() {
+                            status.error = Some(message.clone());
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false)
+            };
+            if repaired_early {
+                let _ = app_handle.emit("server-status-changed", ());
+                let _ = app_handle.emit("server-error", &message);
+            }
             return;
         }
 

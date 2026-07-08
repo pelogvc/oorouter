@@ -109,11 +109,11 @@ export function UpdateBanner() {
       state.error || "Update failed. Retry or install the latest GitHub Release manually.";
   }
 
-  let statusIcon = <Download className="h-4 w-4 text-muted-foreground" />;
+  let statusIcon = <Download className="h-4 w-4 text-muted-foreground" aria-hidden="true" />;
   if (state.status === "error") {
-    statusIcon = <AlertCircle className="h-4 w-4 text-destructive" />;
+    statusIcon = <AlertCircle className="h-4 w-4 text-destructive-text" aria-hidden="true" />;
   } else if (state.status === "installed") {
-    statusIcon = <CheckCircle2 className="h-4 w-4 text-emerald-600" />;
+    statusIcon = <CheckCircle2 className="h-4 w-4 text-success" aria-hidden="true" />;
   }
 
   const handleInstall = async () => {
@@ -225,7 +225,7 @@ export function UpdateBanner() {
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border bg-background">
             {statusIcon}
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0" role="status" aria-live="polite">
             <div className="truncate text-sm font-semibold">{title}</div>
             {detail && (
               <div className="mt-0.5 max-w-[460px] truncate text-xs text-muted-foreground">
@@ -245,25 +245,25 @@ export function UpdateBanner() {
 
         {state.status === "available" && (
           <Button size="sm" onClick={handleInstall} disabled={actionBusy}>
-            <Download className="mr-2 h-3.5 w-3.5" />
+            <Download className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
             Install
           </Button>
         )}
         {state.status === "installing" && (
           <Button size="sm" variant="outline" disabled>
-            <RefreshCw className="mr-2 h-3.5 w-3.5 animate-spin" />
+            <RefreshCw className="mr-2 h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
             Installing
           </Button>
         )}
         {state.status === "installed" && (
           <Button size="sm" onClick={handleRestart} disabled={actionBusy}>
-            <RotateCcw className="mr-2 h-3.5 w-3.5" />
+            <RotateCcw className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
             Restart
           </Button>
         )}
         {state.status === "error" && (
           <Button size="sm" variant="outline" onClick={handleRetry} disabled={actionBusy}>
-            <RefreshCw className="mr-2 h-3.5 w-3.5" />
+            <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
             Retry
           </Button>
         )}

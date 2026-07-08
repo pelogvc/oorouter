@@ -432,10 +432,65 @@ fn spawn_start_completion_monitor(
     });
 }
 
+fn running_status_is_stale(running: bool, stopping: bool, task_finished: Option<bool>) -> bool {
+    running && !stopping && task_finished.unwrap_or(true)
+}
+
+fn reconcile_server_status(
+    server_status: &std::sync::Arc<std::sync::Mutex<ServerStatus>>,
+    server_handle: &std::sync::Arc<std::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
+    server_shutdown: &std::sync::Arc<std::sync::Mutex<Option<watch::Sender<bool>>>>,
+    server_stopping: &std::sync::Arc<std::sync::Mutex<bool>>,
+) -> Result<bool, String> {
+    let stopping_guard = server_stopping
+        .lock()
+        .map_err(|_| "server stopping lock poisoned".to_string())?;
+    let mut handle_guard = server_handle
+        .lock()
+        .map_err(|_| "server handle lock poisoned".to_string())?;
+    let mut shutdown_guard = server_shutdown
+        .lock()
+        .map_err(|_| "server shutdown lock poisoned".to_string())?;
+    let mut status = server_status
+        .lock()
+        .map_err(|_| "server status lock poisoned".to_string())?;
+
+    let task_finished = handle_guard
+        .as_ref()
+        .map(|handle| handle.inner().is_finished());
+    if !running_status_is_stale(status.running, *stopping_guard, task_finished) {
+        return Ok(false);
+    }
+
+    let _ = handle_guard.take();
+    let _ = shutdown_guard.take();
+    if let Some(started_at) = status.started_at {
+        status.uptime_secs = started_at.elapsed().as_secs();
+    }
+    status.running = false;
+    status.started_at = None;
+    status.error = Some("서버 태스크가 예기치 않게 종료됨".to_string());
+    Ok(true)
+}
+
 #[tauri::command]
 pub async fn get_server_status(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, TauriAppState>,
 ) -> Result<ServerStatusDto, String> {
+    let repaired = reconcile_server_status(
+        &state.server_status,
+        &state.server_handle,
+        &state.server_shutdown,
+        &state.server_stopping,
+    )?;
+    if repaired {
+        if let Some(tray) = app_handle.tray_by_id("main-tray") {
+            crate::update_tray_icon_for_state(&tray, false);
+        }
+        let _ = app_handle.emit("server-status-changed", ());
+    }
+
     let status = state
         .server_status
         .lock()
@@ -750,9 +805,9 @@ fn spawn_server_exit_monitor(
     exit_rx: oneshot::Receiver<String>,
 ) {
     tauri::async_runtime::spawn(async move {
-        let Ok(message) = exit_rx.await else {
-            return;
-        };
+        let message = exit_rx
+            .await
+            .unwrap_or_else(|_| "서버 태스크가 예기치 않게 종료됨".to_string());
         let is_current = server_generation
             .lock()
             .map(|generation| *generation == startup_generation)
@@ -766,6 +821,32 @@ fn spawn_server_exit_monitor(
             .map(|status| status.running)
             .unwrap_or(false);
         if !was_running {
+            // get_server_status의 reconcile이 먼저 상태를 교정한 경우,
+            // 일반 메시지 대신 실제 종료 메시지를 보존하고 알림을 발행한다.
+            // generation 락을 쥔 채 갱신해 새 서버 시작과의 경합을 배제한다.
+            let repaired_early = {
+                let Ok(generation_guard) = server_generation.lock() else {
+                    return;
+                };
+                if *generation_guard != startup_generation {
+                    return;
+                }
+                server_status
+                    .lock()
+                    .map(|mut status| {
+                        if status.error.is_some() {
+                            status.error = Some(message.clone());
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false)
+            };
+            if repaired_early {
+                let _ = app_handle.emit("server-status-changed", ());
+                let _ = app_handle.emit("server-error", &message);
+            }
             return;
         }
 
@@ -1192,6 +1273,116 @@ pub async fn get_models(_state: tauri::State<'_, TauriAppState>) -> Result<Vec<M
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn server_status(running: bool) -> Arc<Mutex<ServerStatus>> {
+        Arc::new(Mutex::new(ServerStatus {
+            running,
+            port: 11434,
+            uptime_secs: 0,
+            auth_mode: "ApiKey".to_string(),
+            error: None,
+            started_at: running.then(Instant::now),
+        }))
+    }
+
+    fn finished_handle() -> tauri::async_runtime::JoinHandle<()> {
+        let handle = tauri::async_runtime::spawn(async {});
+        while !handle.inner().is_finished() {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        handle
+    }
+
+    #[test]
+    fn running_status_is_stale_truth_table() {
+        assert!(running_status_is_stale(true, false, Some(true)));
+        assert!(running_status_is_stale(true, false, None));
+        assert!(!running_status_is_stale(true, false, Some(false)));
+        assert!(!running_status_is_stale(true, true, Some(true)));
+        assert!(!running_status_is_stale(false, false, Some(true)));
+        assert!(!running_status_is_stale(false, false, None));
+    }
+
+    #[test]
+    fn reconcile_repairs_running_status_when_server_task_is_dead() {
+        let status = server_status(true);
+        let handle = Arc::new(Mutex::new(Some(finished_handle())));
+        let (shutdown_tx, _shutdown_rx) = watch::channel(false);
+        let shutdown = Arc::new(Mutex::new(Some(shutdown_tx)));
+        let stopping = Arc::new(Mutex::new(false));
+
+        let repaired = reconcile_server_status(&status, &handle, &shutdown, &stopping)
+            .expect("reconcile must not fail");
+
+        assert!(repaired);
+        let status = status.lock().unwrap();
+        assert!(!status.running);
+        assert!(status.started_at.is_none());
+        assert!(status.error.is_some());
+        assert!(handle.lock().unwrap().is_none());
+        assert!(shutdown.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn reconcile_repairs_running_status_when_handle_is_missing() {
+        let status = server_status(true);
+        let handle = Arc::new(Mutex::new(None));
+        let shutdown = Arc::new(Mutex::new(None));
+        let stopping = Arc::new(Mutex::new(false));
+
+        let repaired = reconcile_server_status(&status, &handle, &shutdown, &stopping)
+            .expect("reconcile must not fail");
+
+        assert!(repaired);
+        assert!(!status.lock().unwrap().running);
+    }
+
+    #[test]
+    fn reconcile_keeps_running_status_while_server_task_is_alive() {
+        let status = server_status(true);
+        let alive = tauri::async_runtime::spawn(std::future::pending::<()>());
+        let handle = Arc::new(Mutex::new(Some(alive)));
+        let (shutdown_tx, _shutdown_rx) = watch::channel(false);
+        let shutdown = Arc::new(Mutex::new(Some(shutdown_tx)));
+        let stopping = Arc::new(Mutex::new(false));
+
+        let repaired = reconcile_server_status(&status, &handle, &shutdown, &stopping)
+            .expect("reconcile must not fail");
+
+        assert!(!repaired);
+        assert!(status.lock().unwrap().running);
+        let handle_guard = handle.lock().unwrap();
+        assert!(handle_guard.is_some());
+        handle_guard.as_ref().unwrap().abort();
+    }
+
+    #[test]
+    fn reconcile_skips_repair_while_server_is_stopping() {
+        let status = server_status(true);
+        let handle = Arc::new(Mutex::new(None));
+        let shutdown = Arc::new(Mutex::new(None));
+        let stopping = Arc::new(Mutex::new(true));
+
+        let repaired = reconcile_server_status(&status, &handle, &shutdown, &stopping)
+            .expect("reconcile must not fail");
+
+        assert!(!repaired);
+        assert!(status.lock().unwrap().running);
+    }
+
+    #[test]
+    fn reconcile_ignores_stopped_server_without_handle() {
+        let status = server_status(false);
+        let handle = Arc::new(Mutex::new(None));
+        let shutdown = Arc::new(Mutex::new(None));
+        let stopping = Arc::new(Mutex::new(false));
+
+        let repaired = reconcile_server_status(&status, &handle, &shutdown, &stopping)
+            .expect("reconcile must not fail");
+
+        assert!(!repaired);
+        assert!(!status.lock().unwrap().running);
+    }
 
     #[test]
     fn update_state_dto_hides_idle_state() {

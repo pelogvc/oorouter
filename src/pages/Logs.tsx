@@ -28,9 +28,9 @@ import {
 import { ScrollText, Trash2, Activity } from "lucide-react";
 
 function getStatusClasses(status: number): string {
-  if (status >= 200 && status < 300) return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
-  if (status >= 400 && status < 500) return "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20";
-  if (status >= 500) return "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20";
+  if (status >= 200 && status < 300) return "bg-success/10 text-success border-success/25";
+  if (status >= 400 && status < 500) return "bg-warning/10 text-warning border-warning/25";
+  if (status >= 500) return "bg-destructive-text/10 text-destructive-text border-destructive-text/25";
   return "";
 }
 
@@ -119,12 +119,12 @@ export default function Logs() {
     <div className="flex flex-col h-full">
       <div className="shrink-0 flex h-[57px] items-center justify-between gap-4 border-b px-4">
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
-            <Activity className="h-3.5 w-3.5" />
+          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <Activity aria-hidden="true" className="h-3.5 w-3.5" />
             Traffic
           </div>
           <Select value={modelFilter} onValueChange={setModelFilter}>
-            <SelectTrigger className="w-[150px] h-8 text-xs">
+            <SelectTrigger aria-label="Filter by model" className="w-[150px] h-8 text-xs">
               <SelectValue placeholder="All Models" />
             </SelectTrigger>
             <SelectContent>
@@ -136,7 +136,7 @@ export default function Logs() {
           </Select>
 
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[130px] h-8 text-xs">
+            <SelectTrigger aria-label="Filter by status" className="w-[130px] h-8 text-xs">
               <SelectValue placeholder="All Status" />
             </SelectTrigger>
             <SelectContent>
@@ -151,7 +151,7 @@ export default function Logs() {
             {filteredLogs.length}/{logs.length}
           </Badge>
           {error && (
-            <Badge variant="outline" className="text-xs text-destructive border-destructive/30">
+            <Badge variant="outline" role="alert" className="text-xs text-destructive-text border-destructive-text/30">
               {error}
             </Badge>
           )}
@@ -160,10 +160,10 @@ export default function Logs() {
         <Button
           variant="outline"
           size="sm"
-          className="h-8 text-xs text-destructive hover:text-destructive cursor-pointer"
+          className="h-8 text-xs text-destructive-text hover:text-destructive-text cursor-pointer"
           onClick={() => setLogs([])}
         >
-          <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+          <Trash2 aria-hidden="true" className="w-3.5 h-3.5 mr-1.5" />
           Clear
         </Button>
       </div>
@@ -173,12 +173,12 @@ export default function Logs() {
           <Table className="table-fixed">
             <TableHeader className="sticky top-0 bg-background z-10">
               <TableRow>
-                <TableHead className="h-9 w-[72px] px-3 text-[11px] uppercase">Time</TableHead>
-                <TableHead className="h-9 px-3 text-[11px] uppercase">Request</TableHead>
-                <TableHead className="h-9 w-[76px] px-3 text-[11px] uppercase">Model</TableHead>
-                <TableHead className="h-9 w-[58px] px-3 text-[11px] uppercase">Status</TableHead>
-                <TableHead className="h-9 w-[64px] px-3 text-right text-[11px] uppercase">Tokens</TableHead>
-                <TableHead className="h-9 w-[54px] px-3 text-right text-[11px] uppercase">MS</TableHead>
+                <TableHead className="h-9 w-[72px] px-3 text-[11px] uppercase tracking-wider">Time</TableHead>
+                <TableHead className="h-9 px-3 text-[11px] uppercase tracking-wider">Request</TableHead>
+                <TableHead className="h-9 w-[76px] px-3 text-[11px] uppercase tracking-wider">Model</TableHead>
+                <TableHead className="h-9 w-[58px] px-3 text-[11px] uppercase tracking-wider">Status</TableHead>
+                <TableHead className="h-9 w-[64px] px-3 text-right text-[11px] uppercase tracking-wider">Tokens</TableHead>
+                <TableHead className="h-9 w-[54px] px-3 text-right text-[11px] uppercase tracking-wider">MS</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -186,7 +186,7 @@ export default function Logs() {
                 <TableRow>
                   <TableCell colSpan={6} className="h-48">
                     <div className="flex flex-col items-center gap-2 text-center">
-                      <ScrollText className="w-8 h-8 text-muted-foreground/30" />
+                      <ScrollText aria-hidden="true" className="w-8 h-8 text-muted-foreground/30" />
                       <p className="text-sm text-muted-foreground">No logs recorded yet</p>
                     </div>
                   </TableCell>
