@@ -3,8 +3,11 @@ import {
   checkForUpdates,
   getServerStatus,
   getSettings,
+  getUpdateState,
   isTauriRuntime,
   listen,
+  parseUpdateState,
+  type UpdateState,
   updateSetting,
 } from "@/lib/tauri";
 import { Button } from "@/components/ui/button";
@@ -15,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertCircle,
+  CheckCircle2,
   Download,
   FileKey2,
   Gauge,
@@ -67,6 +71,12 @@ function getErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function formatVersion(version: string | undefined): string {
+  const normalized = version?.trim();
+  if (!normalized || normalized === "browser") return "—";
+  return normalized.startsWith("v") ? normalized : `v${normalized}`;
+}
+
 export default function Settings() {
   const [settings, setSettings] = useState<SettingsState>(DEFAULT_SETTINGS);
   const [savedPort, setSavedPort] = useState(DEFAULT_SETTINGS.port);
@@ -78,7 +88,8 @@ export default function Settings() {
   const [authPathChanged, setAuthPathChanged] = useState(false);
   const [error, setError] = useState<SettingsError | null>(null);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
-  const [updateCheckMessage, setUpdateCheckMessage] = useState<string | null>(null);
+  const [updateState, setUpdateState] = useState<UpdateState | null>(null);
+  const [updateCheckError, setUpdateCheckError] = useState<string | null>(null);
   const dirtyRef = useRef<Record<"port" | "auth_path", boolean>>({
     port: false,
     auth_path: false,
@@ -104,6 +115,49 @@ export default function Settings() {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    let receivedUpdateEvent = false;
+    let stopListening: (() => void) | undefined;
+
+    void (async () => {
+      try {
+        const unlisten = await listen<unknown>("update-state-changed", (event) => {
+          if (!active) return;
+          try {
+            const nextState = parseUpdateState(event.payload);
+            receivedUpdateEvent = true;
+            setUpdateState(nextState);
+            if (nextState.status !== "error") {
+              setUpdateCheckError(null);
+            }
+          } catch (stateError) {
+            setUpdateCheckError(getErrorMessage(stateError));
+          }
+        });
+        if (!active) {
+          unlisten();
+          return;
+        }
+        stopListening = unlisten;
+      } catch {}
+
+      try {
+        const nextState = await getUpdateState();
+        if (active && !receivedUpdateEvent) {
+          setUpdateState(nextState);
+        }
+      } catch (loadError) {
+        if (active) setUpdateCheckError(getErrorMessage(loadError));
+      }
+    })();
+
+    return () => {
+      active = false;
+      stopListening?.();
     };
   }, []);
 
@@ -272,29 +326,20 @@ export default function Settings() {
 
   const checkUpdates = async () => {
     setCheckingUpdates(true);
-    setUpdateCheckMessage(null);
+    setUpdateCheckError(null);
     try {
       const result = await checkForUpdates(true);
       if (!mountedRef.current) return;
-      if (result.status === "available" && result.version) {
-        setUpdateCheckMessage(`Version ${result.version} is available.`);
-      } else if (result.status === "error") {
-        setUpdateCheckMessage(
+      setUpdateState(result);
+      if (result.status === "error") {
+        setUpdateCheckError(
           result.error ??
             "Update check failed. Please try again or install the latest release manually."
         );
-      } else if (result.status === "checking") {
-        setUpdateCheckMessage("Update check is already in progress.");
-      } else if (result.status === "installing") {
-        setUpdateCheckMessage("Update installation is in progress.");
-      } else if (result.status === "installed") {
-        setUpdateCheckMessage("Update installed. Restart the app to finish applying it.");
-      } else {
-        setUpdateCheckMessage("Up to date.");
       }
-    } catch (err) {
+    } catch (checkError) {
       if (mountedRef.current) {
-        setUpdateCheckMessage(getErrorMessage(err));
+        setUpdateCheckError(getErrorMessage(checkError));
       }
     } finally {
       if (mountedRef.current) {
@@ -305,6 +350,56 @@ export default function Settings() {
 
   const generalError = error && error.key !== "auth_path" ? error : null;
   const codexError = error && error.key === "auth_path" ? error : null;
+  const updateStatus = updateState?.status;
+  const isUpdateChecking = checkingUpdates || updateStatus === "checking";
+  const updateActionBusy = isUpdateChecking || updateStatus === "installing";
+  let currentVersionLabel = "—";
+  if (canEditSettings) {
+    currentVersionLabel = "Loading…";
+    if (updateState) {
+      currentVersionLabel = formatVersion(updateState.currentVersion);
+    } else if (updateCheckError) {
+      currentVersionLabel = "Unavailable";
+    }
+  }
+  const updateErrorMessage =
+    updateCheckError ?? (updateStatus === "error" ? updateState?.error : undefined);
+  let latestVersionLabel = canEditSettings ? "Not checked" : "Desktop only";
+  let latestVersionNote: string | null = null;
+  let latestVersionTone = "text-muted-foreground";
+
+  if (canEditSettings) {
+    if (isUpdateChecking) {
+      latestVersionLabel = "Checking…";
+    } else if (updateStatus === "error" && updateState?.version) {
+      latestVersionLabel = formatVersion(updateState.version);
+      latestVersionNote = "Failed";
+      latestVersionTone = "text-destructive-text";
+    } else if (updateErrorMessage) {
+      latestVersionLabel = "Unavailable";
+      latestVersionTone = "text-destructive-text";
+    } else if (updateStatus === "available" && updateState?.version) {
+      latestVersionLabel = formatVersion(updateState.version);
+      latestVersionNote = "Available";
+      latestVersionTone = "text-primary";
+    } else if (updateStatus === "installing") {
+      latestVersionLabel = updateState?.version
+        ? formatVersion(updateState.version)
+        : "Installing…";
+      latestVersionNote = "Installing";
+      latestVersionTone = "text-primary";
+    } else if (updateStatus === "installed") {
+      latestVersionLabel = updateState?.version
+        ? formatVersion(updateState.version)
+        : currentVersionLabel;
+      latestVersionNote = "Restart";
+      latestVersionTone = "text-success";
+    } else if (updateStatus === "idle" && updateState?.manual) {
+      latestVersionLabel = currentVersionLabel;
+      latestVersionNote = "Up to date";
+      latestVersionTone = "text-success";
+    }
+  }
 
   return (
     <Tabs
@@ -404,24 +499,69 @@ export default function Settings() {
                 </label>
                 <p className="mt-1 text-xs text-muted-foreground">GitHub Releases channel</p>
               </div>
-              <div className="flex min-w-0 items-center gap-3">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void checkUpdates()}
-                  disabled={!canEditSettings || checkingUpdates}
-                >
-                  <RefreshCw
-                    aria-hidden="true"
-                    className={`mr-2 h-3.5 w-3.5 ${checkingUpdates ? "animate-spin motion-reduce:animate-none" : ""}`}
-                  />
-                  Check
-                </Button>
-                {updateCheckMessage && (
-                  <span className="truncate text-xs text-muted-foreground">
-                    {updateCheckMessage}
-                  </span>
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-3">
+                  <dl
+                    aria-label="Application versions"
+                    className="flex min-w-0 flex-1 items-center"
+                  >
+                    <div className="w-[76px] shrink-0">
+                      <dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                        Current
+                      </dt>
+                      <dd
+                        id="current-app-version"
+                        className="mt-0.5 truncate text-xs font-semibold tabular-nums text-foreground"
+                      >
+                        {currentVersionLabel}
+                      </dd>
+                    </div>
+                    <div className="min-w-0 flex-1 border-l pl-3">
+                      <dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                        Latest
+                      </dt>
+                      <dd
+                        id="latest-app-version"
+                        role="status"
+                        aria-live="polite"
+                        className={`mt-0.5 flex min-w-0 items-center gap-1.5 text-xs font-semibold tabular-nums ${latestVersionTone}`}
+                      >
+                        <span className="truncate">{latestVersionLabel}</span>
+                        {latestVersionNote && (
+                          <span className="flex shrink-0 items-center gap-1 text-[10px] font-medium">
+                            {latestVersionNote === "Up to date" && (
+                              <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+                            )}
+                            {latestVersionNote}
+                          </span>
+                        )}
+                      </dd>
+                    </div>
+                  </dl>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void checkUpdates()}
+                    disabled={!canEditSettings || updateActionBusy}
+                    aria-label={isUpdateChecking ? "Checking for updates" : "Check for updates"}
+                    className="shrink-0"
+                  >
+                    <RefreshCw
+                      aria-hidden="true"
+                      className={`mr-2 h-3.5 w-3.5 ${isUpdateChecking ? "animate-spin motion-reduce:animate-none" : ""}`}
+                    />
+                    {isUpdateChecking ? "Checking" : "Check"}
+                  </Button>
+                </div>
+                {updateErrorMessage && (
+                  <p
+                    role="alert"
+                    title={updateErrorMessage}
+                    className="mt-1.5 truncate text-[11px] text-destructive-text"
+                  >
+                    {updateErrorMessage}
+                  </p>
                 )}
               </div>
             </div>

@@ -12,6 +12,10 @@ describe("Tauri embedded WebDriver smoke", () => {
     return typeof value === "object" && value !== null;
   }
 
+  function formatVersion(version: string): string {
+    return version.startsWith("v") ? version : `v${version}`;
+  }
+
   async function getMainWindowSnapshot() {
     const raw = await browser.tauri.execute(
       `JSON.stringify({
@@ -128,11 +132,67 @@ describe("Tauri embedded WebDriver smoke", () => {
       "window.__TAURI__.core.invoke('get_update_state')",
       mainWindow
     );
-    if (liveUpdaterCheck) {
-      expect(updateState).toHaveProperty("currentVersion");
-    } else {
+    expect(isRecord(updateState)).toBe(true);
+    expect(updateState).toHaveProperty("currentVersion");
+    if (!isRecord(updateState) || typeof updateState.currentVersion !== "string") {
+      throw new Error(`invalid update state: ${JSON.stringify(updateState)}`);
+    }
+
+    const expectedCurrentVersion = formatVersion(updateState.currentVersion);
+    await browser.waitUntil(
+      async () => {
+        const displayedVersion = await browser.tauri.execute(
+          "document.getElementById('current-app-version')?.textContent?.trim()",
+          mainWindow
+        );
+        return displayedVersion === expectedCurrentVersion;
+      },
+      {
+        timeout: 5000,
+        timeoutMsg: `settings did not display current version ${expectedCurrentVersion}`,
+      }
+    );
+
+    if (!liveUpdaterCheck) {
       expect(updateState).toHaveProperty("status", "idle");
       expect(updateState).toHaveProperty("visible", false);
+      const displayedLatestVersion = await browser.tauri.execute(
+        "document.getElementById('latest-app-version')?.textContent?.trim()",
+        mainWindow
+      );
+      expect(displayedLatestVersion).toBe("Not checked");
+
+      await browser.tauri.execute(
+        `window.__TAURI__.event.emit("update-state-changed", {
+          status: "idle",
+          currentVersion: ${JSON.stringify(updateState.currentVersion)},
+          version: null,
+          date: null,
+          body: null,
+          downloadedBytes: 0,
+          contentLength: null,
+          error: null,
+          visible: false,
+          manual: true,
+        })`,
+        mainWindow
+      );
+      await browser.waitUntil(
+        async () => {
+          const latestText = await browser.tauri.execute(
+            "document.getElementById('latest-app-version')?.textContent ?? ''",
+            mainWindow
+          );
+          return (
+            String(latestText).includes(expectedCurrentVersion) &&
+            String(latestText).includes("Up to date")
+          );
+        },
+        {
+          timeout: 5000,
+          timeoutMsg: "settings did not display the up-to-date version state",
+        }
+      );
     }
   });
 
@@ -182,6 +242,20 @@ describe("Tauri embedded WebDriver smoke", () => {
       expect(updateState).toHaveProperty("visible", true);
       expect(updateState).toHaveProperty("manual", false);
       expect(updateState).not.toHaveProperty("currentVersion", latestVersion);
+
+      await browser.waitUntil(
+        async () => {
+          const displayedLatestVersion = await browser.tauri.execute(
+            "document.getElementById('latest-app-version')?.textContent ?? ''",
+            mainWindow
+          );
+          return String(displayedLatestVersion).includes(formatVersion(latestVersion));
+        },
+        {
+          timeout: 5000,
+          timeoutMsg: `settings did not display latest version ${latestVersion}`,
+        }
+      );
     });
   }
 });
