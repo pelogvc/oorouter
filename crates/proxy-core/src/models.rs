@@ -15,6 +15,27 @@ pub struct ModelDefinition {
 
 const AVAILABLE_MODELS: &[ModelDefinition] = &[
     ModelDefinition {
+        slug: "gpt-5.6-sol",
+        name: "gpt-5.6-sol",
+        visible: true,
+        context_length: 372_000,
+        supports_vision: true,
+    },
+    ModelDefinition {
+        slug: "gpt-5.6-terra",
+        name: "gpt-5.6-terra",
+        visible: true,
+        context_length: 372_000,
+        supports_vision: true,
+    },
+    ModelDefinition {
+        slug: "gpt-5.6-luna",
+        name: "gpt-5.6-luna",
+        visible: true,
+        context_length: 372_000,
+        supports_vision: true,
+    },
+    ModelDefinition {
         slug: "gpt-5.5",
         name: "gpt-5.5",
         visible: true,
@@ -155,17 +176,20 @@ mod tests {
 
     #[test]
     fn test_available_models_count() {
-        assert_eq!(AVAILABLE_MODELS.len(), 10);
+        assert_eq!(AVAILABLE_MODELS.len(), 13);
     }
 
     #[test]
     fn test_visible_models() {
         let visible = get_visible_models();
-        assert_eq!(visible.len(), 6);
+        assert_eq!(visible.len(), 9);
     }
 
     #[test]
     fn test_model_exists() {
+        assert!(model_exists("gpt-5.6-sol"));
+        assert!(model_exists("gpt-5.6-terra"));
+        assert!(model_exists("gpt-5.6-luna:latest"));
         assert!(model_exists("gpt-5.5"));
         assert!(model_exists("gpt-5.3-codex"));
         assert!(model_exists("gpt-5.3-codex:latest"));
@@ -174,6 +198,9 @@ mod tests {
 
     #[test]
     fn test_get_context_length() {
+        assert_eq!(get_context_length("gpt-5.6-sol"), 372_000);
+        assert_eq!(get_context_length("gpt-5.6-terra"), 372_000);
+        assert_eq!(get_context_length("gpt-5.6-luna"), 372_000);
         assert_eq!(get_context_length("gpt-5.5"), 1_050_000);
         assert_eq!(get_context_length("gpt-5.4"), 1_050_000);
         assert_eq!(get_context_length("gpt-5.3-codex-spark"), 128_000);

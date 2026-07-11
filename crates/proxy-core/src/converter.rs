@@ -14,7 +14,8 @@ use crate::types::openai::{
 const MODEL_ALIASES: &[(&str, &str)] = &[
     ("codex", "gpt-5.3-codex"),
     ("spark", "gpt-5.3-codex-spark"),
-    ("gpt5", "gpt-5.5"),
+    ("gpt-5.6", "gpt-5.6-sol"),
+    ("gpt5", "gpt-5.6-sol"),
 ];
 
 pub fn resolve_model(model: &str) -> String {
@@ -360,7 +361,8 @@ mod tests {
     fn test_resolve_model_alias() {
         assert_eq!(resolve_model("codex"), "gpt-5.3-codex");
         assert_eq!(resolve_model("spark"), "gpt-5.3-codex-spark");
-        assert_eq!(resolve_model("gpt5"), "gpt-5.5");
+        assert_eq!(resolve_model("gpt-5.6"), "gpt-5.6-sol");
+        assert_eq!(resolve_model("gpt5"), "gpt-5.6-sol");
     }
 
     #[test]
@@ -370,6 +372,8 @@ mod tests {
 
     #[test]
     fn test_resolve_model_passthrough() {
+        assert_eq!(resolve_model("gpt-5.6-terra"), "gpt-5.6-terra");
+        assert_eq!(resolve_model("gpt-5.6-luna"), "gpt-5.6-luna");
         assert_eq!(resolve_model("gpt-5.4"), "gpt-5.4");
     }
 

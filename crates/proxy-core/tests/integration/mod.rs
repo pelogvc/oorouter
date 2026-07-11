@@ -157,7 +157,13 @@ async fn integration_endpoints_with_live_axum_server() {
         .get("models")
         .and_then(|v| v.as_array())
         .expect("models array");
-    assert!(!models.is_empty());
+    let tag_names: Vec<&str> = models
+        .iter()
+        .map(|model| model["name"].as_str().expect("tag model name"))
+        .collect();
+    assert!(tag_names.contains(&"gpt-5.6-sol:latest"));
+    assert!(tag_names.contains(&"gpt-5.6-terra:latest"));
+    assert!(tag_names.contains(&"gpt-5.6-luna:latest"));
 
     let version = http
         .get(format!("{}/api/version", base_url))
@@ -174,11 +180,18 @@ async fn integration_endpoints_with_live_axum_server() {
 
     let show_ok = http
         .post(format!("{}/api/show", base_url))
-        .json(&serde_json::json!({ "name": "gpt-5.3-codex" }))
+        .json(&serde_json::json!({ "name": "gpt-5.6" }))
         .send()
         .await
         .expect("POST /api/show valid");
     assert_eq!(show_ok.status(), StatusCode::OK);
+    let show_json: serde_json::Value = show_ok.json().await.expect("POST /api/show json");
+    assert_eq!(show_json["model_info"]["gpt.context_length"], 372_000);
+    assert!(show_json["capabilities"]
+        .as_array()
+        .expect("show capabilities")
+        .iter()
+        .any(|capability| capability == "vision"));
 
     let show_missing = http
         .post(format!("{}/api/show", base_url))
@@ -245,6 +258,9 @@ async fn integration_endpoints_with_live_axum_server() {
     assert_eq!(
         model_ids,
         vec![
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
             "gpt-5.5",
             "gpt-5.4",
             "gpt-5.3-codex",

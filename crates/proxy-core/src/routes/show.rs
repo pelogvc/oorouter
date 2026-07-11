@@ -5,18 +5,20 @@ use axum::Json;
 use serde_json::json;
 use std::collections::HashMap;
 
+use crate::converter::resolve_model;
 use crate::models::{get_capabilities, get_context_length, model_exists};
 use crate::types::ollama::{OllamaModelDetails, OllamaShowRequest, OllamaShowResponse};
 
 pub async fn post_show(
     Json(body): Json<OllamaShowRequest>,
 ) -> Result<Json<OllamaShowResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let model_name = body.name.trim_end_matches(":latest");
+    let requested_model = body.name.trim_end_matches(":latest");
+    let model_name = resolve_model(requested_model);
 
-    if !model_exists(model_name) {
+    if !model_exists(&model_name) {
         return Err((
             StatusCode::NOT_FOUND,
-            Json(json!({ "error": format!("model '{}' not found", model_name) })),
+            Json(json!({ "error": format!("model '{}' not found", requested_model) })),
         ));
     }
 
@@ -25,7 +27,7 @@ pub async fn post_show(
     model_info.insert("general.basename".to_string(), json!(model_name));
     model_info.insert(
         "gpt.context_length".to_string(),
-        json!(get_context_length(model_name)),
+        json!(get_context_length(&model_name)),
     );
 
     Ok(Json(OllamaShowResponse {
@@ -41,7 +43,7 @@ pub async fn post_show(
             quantization_level: "none".to_string(),
         },
         model_info,
-        capabilities: get_capabilities(model_name),
+        capabilities: get_capabilities(&model_name),
     }))
 }
 
@@ -69,6 +71,16 @@ mod tests {
         };
         let result = post_show(Json(req)).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_show_resolves_model_alias() {
+        let req = OllamaShowRequest {
+            name: "gpt-5.6".to_string(),
+        };
+        let Json(resp) = post_show(Json(req)).await.unwrap();
+        assert_eq!(resp.modelfile, "FROM gpt-5.6-sol");
+        assert_eq!(resp.model_info["gpt.context_length"], 372_000);
     }
 
     #[tokio::test]

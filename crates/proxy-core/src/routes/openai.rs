@@ -17,7 +17,7 @@ use uuid::Uuid;
 use super::{AppState, RouteResult};
 use crate::{
     client::redact_sensitive_text,
-    converter::openai_chat_request_to_codex,
+    converter::{openai_chat_request_to_codex, resolve_model},
     db::Database,
     error::ProxyError,
     logger::{push_log, LogEntry},
@@ -29,7 +29,7 @@ use crate::{
     usage::{record_token_usage, token_count_for_log},
 };
 
-const FALLBACK_CODEX_CLIENT_VERSION: &str = "0.111.0";
+const FALLBACK_CODEX_CLIENT_VERSION: &str = "0.144.1";
 const MODELS_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_RESPONSES_SSE_LINE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BACKEND_ERROR_BODY_BYTES: usize = 64 * 1024;
@@ -111,6 +111,11 @@ fn contains_server_replay_state(value: &Value) -> bool {
 }
 
 fn normalize_responses_body(mut body: Map<String, Value>) -> Value {
+    let resolved_model = body.get("model").and_then(Value::as_str).map(resolve_model);
+    if let Some(model) = resolved_model {
+        body.insert("model".to_string(), Value::String(model));
+    }
+
     if !body
         .get("instructions")
         .is_some_and(|value| value.is_string())
@@ -152,8 +157,17 @@ fn stop_contains_non_empty_sequence(stop: Option<&OpenAIStop>) -> bool {
     }
 }
 
-fn is_supported_reasoning_effort(value: Option<&str>) -> bool {
-    matches!(value, None | Some("low" | "medium" | "high"))
+fn is_supported_reasoning_effort(model: &str, value: Option<&str>) -> bool {
+    let model = resolve_model(model);
+    match value {
+        None | Some("low" | "medium" | "high" | "xhigh") => true,
+        Some("max") => matches!(
+            model.as_str(),
+            "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
+        ),
+        Some("ultra") => matches!(model.as_str(), "gpt-5.6-sol" | "gpt-5.6-terra"),
+        _ => false,
+    }
 }
 
 fn process_responses_usage_sse_line(
@@ -606,10 +620,10 @@ pub async fn post_chat_completions(
         ));
     }
 
-    if !is_supported_reasoning_effort(body.reasoning_effort.as_deref()) {
+    if !is_supported_reasoning_effort(&body.model, body.reasoning_effort.as_deref()) {
         return Err(openai_error(
             StatusCode::BAD_REQUEST,
-            "`reasoning_effort` must be one of: low, medium, high.",
+            "Unsupported `reasoning_effort` for the selected model.",
             "invalid_request_error",
         ));
     }
@@ -776,6 +790,31 @@ mod tests {
     use super::*;
     use axum::body::to_bytes;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn test_supported_reasoning_effort_for_gpt56_models() {
+        assert!(is_supported_reasoning_effort("gpt-5.6", Some("ultra")));
+        assert!(is_supported_reasoning_effort(
+            "gpt-5.6-terra",
+            Some("ultra")
+        ));
+        assert!(is_supported_reasoning_effort("gpt-5.6-luna", Some("max")));
+        assert!(!is_supported_reasoning_effort(
+            "gpt-5.6-luna",
+            Some("ultra")
+        ));
+        assert!(!is_supported_reasoning_effort("gpt-5.5", Some("max")));
+    }
+
+    #[test]
+    fn test_normalize_responses_body_resolves_model_alias() {
+        let body = serde_json::json!({ "model": "gpt-5.6", "input": "hello" })
+            .as_object()
+            .unwrap()
+            .clone();
+        let normalized = normalize_responses_body(body);
+        assert_eq!(normalized["model"], "gpt-5.6-sol");
+    }
 
     async fn mock_sse_response(body: &str) -> reqwest::Response {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -13,9 +13,9 @@ import {
 import { Cpu, Eye, EyeOff, Loader2, AlertCircle, Boxes } from "lucide-react";
 
 const ALIASES: Record<string, string> = {
-  codex: "gpt-5.3-codex",
-  spark: "gpt-5.3-codex-spark",
-  gpt5: "gpt-5.5",
+  "gpt-5.3-codex": "codex",
+  "gpt-5.3-codex-spark": "spark",
+  "gpt-5.6-sol": "gpt5, gpt-5.6",
 };
 
 export default function Models() {
@@ -106,7 +106,7 @@ export default function Models() {
         </Card>
       ) : (
         <Card className="min-h-0 flex-1 overflow-hidden">
-          <CardContent className="h-full p-0">
+          <CardContent className="h-full min-h-0 overflow-auto p-0">
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-card">
                 <TableRow>

@@ -263,6 +263,9 @@ function parseOllamaTagsResponse(value: unknown): OllamaTagsResponse {
 }
 
 function browserModelContextLength(id: string): number {
+  if (id === "gpt-5.6-sol" || id === "gpt-5.6-terra" || id === "gpt-5.6-luna") {
+    return 372_000;
+  }
   if (id === "gpt-5.5" || id === "gpt-5.4" || id === "gpt-5.4-pro") {
     return 1_050_000;
   }
