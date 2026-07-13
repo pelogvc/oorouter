@@ -1,3 +1,10 @@
+## [1.2.1](https://github.com/pelogvc/oorouter/compare/v1.2.0...v1.2.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* ad-hoc sign macOS app bundle ([ad60376](https://github.com/pelogvc/oorouter/commit/ad60376038ba36a4ae7bb00910a6a040d5ba3853))
+
 # [1.2.0](https://github.com/pelogvc/oorouter/compare/v1.1.1...v1.2.0) (2026-07-13)
 
 
