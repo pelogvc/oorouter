@@ -1,3 +1,12 @@
+# [1.2.0](https://github.com/pelogvc/oorouter/compare/v1.1.1...v1.2.0) (2026-07-13)
+
+
+### Features
+
+* add GPT-5.6 model family support ([c128deb](https://github.com/pelogvc/oorouter/commit/c128debb3e15b5f6fa07992915423a336d428e81))
+* **settings:** show current and latest app versions ([a32a4f8](https://github.com/pelogvc/oorouter/commit/a32a4f86e556e24e9847c7c1c7c334ae1c6f3efe))
+* **ui:** warm palette redesign, dashboard rework, and settings sub-tabs ([d0bef62](https://github.com/pelogvc/oorouter/commit/d0bef621e0313cc4be97e864e2343c74fbd42147))
+
 ## [1.1.1](https://github.com/pelogvc/oorouter/compare/v1.1.0...v1.1.1) (2026-07-05)
 
 
