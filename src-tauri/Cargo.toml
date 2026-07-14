@@ -17,6 +17,8 @@ tauri-plugin-autostart = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-updater = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-single-instance = "2"
 tauri-plugin-wdio = "1"
 tauri-plugin-wdio-webdriver = "1"
 serde = { version = "1", features = ["derive"] }
@@ -26,3 +28,7 @@ proxy-core = { path = "../crates/proxy-core" }
 axum = "0.7"
 tracing = { workspace = true }
 url = "2"
+
+[dev-dependencies]
+sqlx = { workspace = true }
+tempfile = { workspace = true }

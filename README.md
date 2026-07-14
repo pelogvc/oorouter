@@ -22,6 +22,7 @@ Your App (Ollama/OpenAI API) → oorouter → ChatGPT Backend → oorouter → Y
 - **Light/Dark mode** — System-aware theme with manual toggle
 - **Token tracking** — SQLite-backed usage logging per model and day
 - **Auth file watching** — Auto-reloads credentials when `auth.json` changes
+- **Optional client authentication** — Protect only OpenAI-compatible `/v1/*` routes with one or more Bearer API keys
 
 ## Supported Backends
 
@@ -50,18 +51,116 @@ cargo tauri build
 
 ```bash
 # Run the proxy without the desktop UI
-cargo run -p proxy-core --bin proxy-server
+cargo run --quiet -p proxy-core --bin proxy-server
 
 # The proxy listens on port 11434 by default (same as Ollama)
 curl http://localhost:11434/api/tags
 ```
 
-### Docker
+The standalone server binds to `127.0.0.1` by default. Use `--host <ip>` to
+select another interface. Client authentication is off when no `--api-key` is
+provided. Supplying one or more keys enables Bearer authentication for
+OpenAI-compatible `/v1/*` endpoints only; Ollama `/api/*`, `/health`, and `/`
+remain public.
 
 ```bash
-docker build -t oorouter .
-docker run -p 11434:11434 -v ~/.codex:/root/.codex:ro oorouter
+API_KEY_ONE="sk-$(openssl rand -base64 96 | tr -dc 'A-Za-z0-9' | head -c 64)"
+API_KEY_TWO="sk-$(openssl rand -base64 96 | tr -dc 'A-Za-z0-9' | head -c 64)"
+
+cargo run --quiet -p proxy-core --bin proxy-server -- \
+  --api-key "$API_KEY_ONE" \
+  --api-key "$API_KEY_TWO"
 ```
+
+Each key must have the format `sk-` followed by exactly 64 ASCII letters or
+digits. Duplicate values are ignored. Standalone keys remain in process memory
+and are not written to the desktop SQLite database. Because command-line secrets
+can be visible in shell history and process listings, take the same precautions
+you use for other command-line credentials. `--quiet` prevents Cargo from
+printing the full `Running` command with the supplied keys.
+
+### Docker
+
+Build the multi-stage image from the repository root:
+
+```bash
+docker build --pull -t oorouter .
+docker volume create oorouter-data
+```
+
+The entrypoint uses root only during a restricted initialization step. It copies
+the read-only Codex auth file to a private, non-persistent runtime path, prepares
+the data directory, removes inherited capabilities, and then runs both `tini`
+and the standalone server as UID/GID `10001`. This allows a native Linux
+`~/.codex/auth.json` with mode `0600` to remain private on the host while still
+being readable by the fixed non-root runtime user.
+
+Publish the port on the host loopback address to keep the default local-only
+access boundary. Mount Codex configuration read-only at `/config/codex`, while
+SQLite usage data uses a separate writable named volume:
+
+```bash
+docker run --detach --rm --name oorouter \
+  --publish 127.0.0.1:11434:11434 \
+  --mount type=bind,src="$HOME/.codex",dst=/config/codex,readonly \
+  --mount type=volume,src=oorouter-data,dst=/data \
+  oorouter
+```
+
+The named volume is recommended. If a host bind mount is required for SQLite,
+use a directory dedicated to this container. Initialization changes that
+directory to numeric owner `10001:10001` and mode `0700`; do not point `/data`
+at a shared or general-purpose directory:
+
+```bash
+mkdir -p "$HOME/.local/share/oorouter-docker"
+
+docker run --detach --rm --name oorouter \
+  --publish 127.0.0.1:11434:11434 \
+  --mount type=bind,src="$HOME/.codex",dst=/config/codex,readonly \
+  --mount type=bind,src="$HOME/.local/share/oorouter-docker",dst=/data \
+  oorouter
+```
+
+The auth file is copied only at container startup. Restart the container after
+Codex refreshes `auth.json` so the private runtime copy is refreshed.
+
+With no key argument, client authentication is off and both Ollama and
+OpenAI-compatible endpoints keep their existing behavior. To protect `/v1/*`,
+repeat `--api-key` as needed. The entrypoint always appends the required
+`--host 0.0.0.0` after user arguments, so overriding the image command with API
+key arguments cannot accidentally restore loopback-only container binding:
+
+```bash
+API_KEY_ONE="sk-$(openssl rand -base64 96 | tr -dc 'A-Za-z0-9' | head -c 64)"
+API_KEY_TWO="sk-$(openssl rand -base64 96 | tr -dc 'A-Za-z0-9' | head -c 64)"
+
+docker run --detach --rm --name oorouter \
+  --publish 127.0.0.1:11434:11434 \
+  --mount type=bind,src="$HOME/.codex",dst=/config/codex,readonly \
+  --mount type=volume,src=oorouter-data,dst=/data \
+  oorouter \
+  --api-key "$API_KEY_ONE" \
+  --api-key "$API_KEY_TWO"
+```
+
+Stop the no-key example before starting the authenticated variant if you use the
+same container name and port. Once the keyed container is running, the public
+and protected paths can be checked independently:
+
+```bash
+curl http://127.0.0.1:11434/health
+curl http://127.0.0.1:11434/api/tags
+curl http://127.0.0.1:11434/v1/models \
+  --header "Authorization: Bearer $API_KEY_ONE"
+```
+
+Valid Bearer keys pass registered OpenAI-compatible requests, while missing or
+invalid keys receive `401 Unauthorized`. Ollama routes and `/health` remain
+accessible without a key. CLI keys are runtime-only: they are not written to
+`oorouter-data`, and restarting the container without `--api-key` turns client
+authentication off again. The read-only Codex mount is upstream authentication
+configuration and is independent of these client API keys.
 
 ## Usage
 

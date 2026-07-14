@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { listen } from "@/lib/tauri";
 import { Layout, type Tab } from "@/components/Layout";
 import Home from "@/pages/Home";
+import Auth from "@/pages/Auth";
 import Logs from "@/pages/Logs";
 import Models from "@/pages/Models";
 import Settings from "@/pages/Settings";
@@ -30,6 +31,8 @@ function App() {
         return <Settings />;
       case "usage":
         return <TokenUsage />;
+      case "auth":
+        return <Auth />;
       default:
         return <Home />;
     }

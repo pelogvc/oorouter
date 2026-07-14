@@ -969,6 +969,7 @@ mod tests {
         ));
         let state = AppState {
             client,
+            client_auth: Default::default(),
             db,
             log_buffer: crate::logger::new_log_buffer(),
         };

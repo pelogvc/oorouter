@@ -39,7 +39,9 @@ bytes = { workspace = true }
 futures = { workspace = true }
 chrono = { workspace = true }
 async-stream = { workspace = true }
+subtle = { workspace = true }
+rand = { workspace = true }
 
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = { workspace = true }

@@ -1,6 +1,8 @@
 pub mod auth;
 pub mod auth_watcher;
 pub mod client;
+pub mod client_auth;
+pub mod client_auth_store;
 pub mod config;
 pub mod converter;
 pub mod db;
@@ -9,6 +11,7 @@ pub mod logger;
 pub mod models;
 pub mod openai_streaming;
 pub mod routes;
+pub mod server_args;
 pub mod streaming;
 pub mod types;
 pub mod usage;

@@ -97,6 +97,7 @@ mod tests {
 
         let state = AppState {
             client: test_client(),
+            client_auth: Default::default(),
             db,
             log_buffer: new_log_buffer(),
         };
@@ -118,6 +119,7 @@ mod tests {
         let db = Arc::new(Database::new(&dir.path().join("test.db")).await.unwrap());
         let state = AppState {
             client: test_client(),
+            client_auth: Default::default(),
             db,
             log_buffer: new_log_buffer(),
         };

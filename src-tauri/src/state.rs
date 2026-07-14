@@ -4,6 +4,8 @@ use std::time::Instant;
 use proxy_core::routes::AppState;
 use tauri_plugin_updater::Update;
 
+use crate::client_auth::DesktopClientAuthController;
+
 pub struct ServerStatus {
     pub running: bool,
     pub port: u16,
@@ -83,6 +85,7 @@ impl AppUpdateRuntimeState {
 
 pub struct TauriAppState {
     pub proxy_state: Arc<AppState>,
+    pub client_auth: DesktopClientAuthController,
     pub server_status: Arc<Mutex<ServerStatus>>,
     pub server_handle: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
     pub server_shutdown: Arc<Mutex<Option<tokio::sync::watch::Sender<bool>>>>,

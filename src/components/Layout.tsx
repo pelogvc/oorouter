@@ -10,13 +10,14 @@ import {
   Cpu,
   Settings,
   BarChart3,
+  KeyRound,
   Sun,
   Moon,
   Monitor,
   Circle,
 } from "lucide-react";
 
-export type Tab = "home" | "logs" | "models" | "settings" | "usage";
+export type Tab = "home" | "logs" | "models" | "settings" | "usage" | "auth";
 
 interface LayoutProps {
   activeTab: Tab;
@@ -29,6 +30,7 @@ const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "logs", label: "Logs", icon: ScrollText },
   { id: "models", label: "Models", icon: Cpu },
   { id: "usage", label: "Usage", icon: BarChart3 },
+  { id: "auth", label: "Auth", icon: KeyRound },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -80,6 +82,12 @@ export function Layout({ activeTab, onTabChange, children }: LayoutProps) {
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background text-foreground">
+      <a
+        href="#main-content"
+        className="fixed left-3 top-3 z-50 -translate-y-16 rounded-md bg-foreground px-3 py-2 text-sm font-medium text-background shadow-lg transition-transform duration-150 focus:translate-y-0 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+      >
+        Skip to content
+      </a>
       <nav className="flex w-40 shrink-0 flex-col border-r bg-card">
         <div className="flex h-14 items-center gap-2.5 border-b px-3">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-foreground text-background">
@@ -180,7 +188,9 @@ export function Layout({ activeTab, onTabChange, children }: LayoutProps) {
         </header>
 
         <UpdateBanner />
-        <main className="flex-1 overflow-auto">{children}</main>
+        <main id="main-content" className="flex-1 overflow-auto" tabIndex={-1}>
+          {children}
+        </main>
       </div>
     </div>
   );

@@ -7,9 +7,11 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tauri::Emitter;
 use tauri_plugin_autostart::ManagerExt;
+use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::{oneshot, watch};
 
+use crate::client_auth::{DeleteClientApiKeyResult, DesktopClientAuthState};
 use crate::state::{
     AppUpdateRuntimeState, AppUpdateState, AppUpdateStatus, ServerStatus, TauriAppState,
 };
@@ -53,6 +55,36 @@ pub struct TokenUsageDto {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientApiKeyDto {
+    pub id: String,
+    pub name: Option<String>,
+    pub redacted_value: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientAuthStateDto {
+    pub enabled: bool,
+    pub keys: Vec<ClientApiKeyDto>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientApiKeySecretDto {
+    pub id: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteClientApiKeyResultDto {
+    pub state: ClientAuthStateDto,
+    pub auto_disabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ModelDto {
     pub id: String,
     pub name: String,
@@ -86,6 +118,31 @@ fn auth_mode_label(auth: &proxy_core::auth::AuthInfo) -> String {
     match &auth.mode {
         proxy_core::auth::AuthMode::ChatGPT => "ChatGPT".to_string(),
         proxy_core::auth::AuthMode::ApiKey => "ApiKey".to_string(),
+    }
+}
+
+fn client_auth_state_dto(state: DesktopClientAuthState) -> ClientAuthStateDto {
+    ClientAuthStateDto {
+        enabled: state.enabled,
+        keys: state
+            .keys
+            .into_iter()
+            .map(|key| ClientApiKeyDto {
+                id: key.id,
+                name: key.name,
+                redacted_value: key.redacted_value,
+                created_at: key.created_at,
+            })
+            .collect(),
+    }
+}
+
+fn delete_client_api_key_result_dto(
+    result: DeleteClientApiKeyResult,
+) -> DeleteClientApiKeyResultDto {
+    DeleteClientApiKeyResultDto {
+        state: client_auth_state_dto(result.state),
+        auto_disabled: result.auto_disabled,
     }
 }
 
@@ -1186,6 +1243,72 @@ pub async fn update_setting(
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn list_client_api_keys(
+    state: tauri::State<'_, TauriAppState>,
+) -> Result<ClientAuthStateDto, String> {
+    state.client_auth.state().await.map(client_auth_state_dto)
+}
+
+#[tauri::command]
+pub async fn create_client_api_key(
+    name: Option<String>,
+    state: tauri::State<'_, TauriAppState>,
+) -> Result<ClientAuthStateDto, String> {
+    state
+        .client_auth
+        .create(name.as_deref())
+        .await
+        .map(client_auth_state_dto)
+}
+
+#[tauri::command]
+pub async fn reveal_client_api_key(
+    id: String,
+    state: tauri::State<'_, TauriAppState>,
+) -> Result<ClientApiKeySecretDto, String> {
+    let value = state.client_auth.reveal(&id).await?;
+    Ok(ClientApiKeySecretDto { id, value })
+}
+
+#[tauri::command]
+pub async fn copy_client_api_key(
+    id: String,
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, TauriAppState>,
+) -> Result<(), String> {
+    let value = state.client_auth.reveal(&id).await?;
+    app_handle
+        .clipboard()
+        .write_text(value)
+        .map_err(|_| "Could not write the client API key to the clipboard".to_string())
+}
+
+#[tauri::command]
+pub async fn delete_client_api_key(
+    id: String,
+    confirmed_auto_disable: bool,
+    state: tauri::State<'_, TauriAppState>,
+) -> Result<DeleteClientApiKeyResultDto, String> {
+    state
+        .client_auth
+        .delete(&id, confirmed_auto_disable)
+        .await
+        .map(delete_client_api_key_result_dto)
+}
+
+#[tauri::command]
+pub async fn set_client_auth_enabled(
+    enabled: bool,
+    state: tauri::State<'_, TauriAppState>,
+) -> Result<ClientAuthStateDto, String> {
+    state
+        .client_auth
+        .set_enabled(enabled)
+        .await
+        .map(client_auth_state_dto)
 }
 
 #[tauri::command]

@@ -3,13 +3,20 @@ use std::time::Duration;
 
 use axum::{
     http::{header, HeaderValue, Method, StatusCode},
+    middleware,
     response::Response,
     routing::{delete, get, post},
     Json, Router,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
-use crate::{client::CodexClient, db::Database, error::ProxyError, logger::LogBuffer};
+use crate::{
+    client::CodexClient,
+    client_auth::{authenticate_openai_request, ClientAuthRuntime},
+    db::Database,
+    error::ProxyError,
+    logger::LogBuffer,
+};
 
 pub mod chat;
 pub mod generate;
@@ -23,6 +30,7 @@ pub mod usage_stats;
 #[derive(Clone)]
 pub struct AppState {
     pub client: Arc<CodexClient>,
+    pub client_auth: ClientAuthRuntime,
     pub db: Arc<Database>,
     pub log_buffer: LogBuffer,
 }
@@ -51,6 +59,7 @@ fn is_allowed_local_origin(origin: &HeaderValue) -> bool {
 }
 
 pub fn create_router(state: AppState) -> Router {
+    let client_auth = state.client_auth.clone();
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(|origin, _| {
             is_allowed_local_origin(origin)
@@ -77,6 +86,15 @@ pub fn create_router(state: AppState) -> Router {
         .expose_headers([header::CONTENT_TYPE])
         .max_age(Duration::from_secs(5));
 
+    let openai_routes = Router::new()
+        .route("/v1/responses", post(openai::post_responses))
+        .route("/v1/chat/completions", post(openai::post_chat_completions))
+        .route("/v1/models", get(openai::get_models))
+        .route_layer(middleware::from_fn_with_state(
+            client_auth,
+            authenticate_openai_request,
+        ));
+
     Router::new()
         .route("/", get(stubs::health))
         .route("/health", get(openai::health))
@@ -93,9 +111,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/delete", delete(stubs::delete_model))
         .route("/api/pull", post(stubs::post_pull))
         .route("/api/push", post(stubs::post_push))
-        .route("/v1/responses", post(openai::post_responses))
-        .route("/v1/chat/completions", post(openai::post_chat_completions))
-        .route("/v1/models", get(openai::get_models))
+        .merge(openai_routes)
         .layer(cors)
         .with_state(state)
 }

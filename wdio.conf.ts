@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import http, { type Server } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -14,10 +15,13 @@ const dataHome = path.join(e2eDir, "data");
 const appBinaryPath =
   process.env.WDIO_APP_BINARY ?? path.join(rootDir, "target", "debug", "oorouter");
 const proxyPort = process.env.WDIO_PROXY_PORT ?? "19134";
+const upstreamPort = Number(process.env.WDIO_UPSTREAM_PORT ?? "19135");
+const upstreamResponsesUrl = `http://127.0.0.1:${upstreamPort}/backend-api/codex/responses`;
 const liveUpdaterCheck = process.env.WDIO_LIVE_UPDATER_CHECK === "true";
 const viteUrl = "http://127.0.0.1:1420";
 const viteBin = path.join(rootDir, "node_modules", ".bin", "vite");
 let viteServer: ChildProcessWithoutNullStreams | undefined;
+let upstreamServer: Server | undefined;
 let viteLogs = "";
 
 fs.mkdirSync(dataHome, { recursive: true });
@@ -60,6 +64,36 @@ async function waitForViteServer() {
   throw new Error(`Timed out waiting for Vite dev server at ${viteUrl}\n${viteLogs}`);
 }
 
+async function startMockUpstream() {
+  upstreamServer = http.createServer((request, response) => {
+    const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+    if (request.method === "GET" && url.pathname === "/backend-api/codex/models") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ models: [{ slug: "gpt-5.6-sol" }] }));
+      return;
+    }
+
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: "not found" }));
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    upstreamServer?.once("error", reject);
+    upstreamServer?.listen(upstreamPort, "127.0.0.1", resolve);
+  });
+}
+
+async function stopMockUpstream() {
+  const server = upstreamServer;
+  upstreamServer = undefined;
+  if (!server) {
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+}
+
 export const config: Options.Testrunner = {
   runner: "local",
   specs: ["./tests/e2e/**/*.spec.ts"],
@@ -84,6 +118,7 @@ export const config: Options.Testrunner = {
           AUTH_PATH: authPath,
           XDG_DATA_HOME: dataHome,
           PORT: proxyPort,
+          CHATGPT_API_URL: upstreamResponsesUrl,
           LOG_LEVEL: "error",
           OOROUTER_DISABLE_STARTUP_UPDATE_CHECK: liveUpdaterCheck ? "false" : "true",
         },
@@ -110,6 +145,7 @@ export const config: Options.Testrunner = {
   },
   onPrepare: async () => {
     await assertVitePortAvailable();
+    await startMockUpstream();
     viteServer = spawn(
       viteBin,
       ["--host", "127.0.0.1", "--port", "1420", "--strictPort", "--mode", "wdio"],
@@ -138,7 +174,8 @@ export const config: Options.Testrunner = {
       }),
     ]);
   },
-  onComplete: () => {
+  onComplete: async () => {
     viteServer?.kill();
+    await stopMockUpstream();
   },
 };

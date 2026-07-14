@@ -52,6 +52,28 @@ export interface Setting {
   value: string;
 }
 
+export interface ClientApiKey {
+  id: string;
+  name?: string;
+  redactedValue: string;
+  createdAt: string;
+}
+
+export interface ClientAuthState {
+  enabled: boolean;
+  keys: ClientApiKey[];
+}
+
+export interface ClientApiKeySecret {
+  id: string;
+  value: string;
+}
+
+export interface DeleteClientApiKeyResult {
+  state: ClientAuthState;
+  autoDisabled: boolean;
+}
+
 export interface LogEntry {
   id: string;
   timestamp: string;
@@ -182,6 +204,40 @@ function parseSetting(value: unknown): Setting {
   return {
     key: readString(record, "key"),
     value: readString(record, "value"),
+  };
+}
+
+function parseClientApiKey(value: unknown): ClientApiKey {
+  const record = parseRecord(value);
+  return {
+    id: readString(record, "id"),
+    name: readOptionalString(record, "name"),
+    redactedValue: readString(record, "redactedValue"),
+    createdAt: readString(record, "createdAt"),
+  };
+}
+
+function parseClientAuthState(value: unknown): ClientAuthState {
+  const record = parseRecord(value);
+  return {
+    enabled: readBoolean(record, "enabled"),
+    keys: readArray(record.keys, parseClientApiKey),
+  };
+}
+
+function parseClientApiKeySecret(value: unknown): ClientApiKeySecret {
+  const record = parseRecord(value);
+  return {
+    id: readString(record, "id"),
+    value: readString(record, "value"),
+  };
+}
+
+function parseDeleteClientApiKeyResult(value: unknown): DeleteClientApiKeyResult {
+  const record = parseRecord(value);
+  return {
+    state: parseClientAuthState(record.state),
+    autoDisabled: readBoolean(record, "autoDisabled"),
   };
 }
 
@@ -383,6 +439,59 @@ export async function updateSetting(key: string, value: string) {
     throw new Error("Settings can only be updated from the Tauri app.");
   }
   return invoke<void>("update_setting", { key, value });
+}
+
+export async function listClientApiKeys(): Promise<ClientAuthState> {
+  if (!isRunningInTauri()) {
+    throw new Error("Client authentication status is available only in the Tauri desktop app.");
+  }
+  return parseClientAuthState(await invoke<unknown>("list_client_api_keys"));
+}
+
+export async function createClientApiKey(name?: string): Promise<ClientAuthState> {
+  if (!isRunningInTauri()) {
+    throw new Error("API keys can only be managed from the Tauri desktop app.");
+  }
+  return parseClientAuthState(
+    await invoke<unknown>("create_client_api_key", { name: name ?? null })
+  );
+}
+
+export async function revealClientApiKey(id: string): Promise<ClientApiKeySecret> {
+  if (!isRunningInTauri()) {
+    throw new Error("API keys can only be revealed from the Tauri desktop app.");
+  }
+  return parseClientApiKeySecret(
+    await invoke<unknown>("reveal_client_api_key", { id })
+  );
+}
+
+export async function copyClientApiKey(id: string): Promise<void> {
+  if (!isRunningInTauri()) {
+    throw new Error("API keys can only be copied from the Tauri desktop app.");
+  }
+  await invoke<void>("copy_client_api_key", { id });
+}
+
+export async function deleteClientApiKey(
+  id: string,
+  confirmedAutoDisable: boolean
+): Promise<DeleteClientApiKeyResult> {
+  if (!isRunningInTauri()) {
+    throw new Error("API keys can only be deleted from the Tauri desktop app.");
+  }
+  return parseDeleteClientApiKeyResult(
+    await invoke<unknown>("delete_client_api_key", { id, confirmedAutoDisable })
+  );
+}
+
+export async function setClientAuthEnabled(enabled: boolean): Promise<ClientAuthState> {
+  if (!isRunningInTauri()) {
+    throw new Error("Client authentication can only be changed from the Tauri desktop app.");
+  }
+  return parseClientAuthState(
+    await invoke<unknown>("set_client_auth_enabled", { enabled })
+  );
 }
 
 export async function getRecentLogs(limit: number = 100): Promise<LogEntry[]> {

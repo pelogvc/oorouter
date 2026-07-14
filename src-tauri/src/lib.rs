@@ -1,3 +1,4 @@
+mod client_auth;
 mod commands;
 mod state;
 
@@ -33,6 +34,7 @@ fn create_proxy_state() -> Result<
         String,
         std::path::PathBuf,
         proxy_core::auth_watcher::SharedAuth,
+        client_auth::DesktopClientAuthController,
     ),
     String,
 > {
@@ -81,9 +83,16 @@ fn create_proxy_state() -> Result<
         config.chatgpt_api_url.clone(),
     ));
 
+    let db = Arc::new(db);
+    let desktop_client_auth = runtime
+        .block_on(client_auth::DesktopClientAuthController::hydrate(
+            db.clone(),
+        ))
+        .map_err(|e| format!("init client API authentication failed: {e}"))?;
     let state = proxy_core::routes::AppState {
         client,
-        db: Arc::new(db),
+        client_auth: desktop_client_auth.runtime(),
+        db,
         log_buffer: proxy_core::logger::new_log_buffer(),
     };
 
@@ -93,6 +102,7 @@ fn create_proxy_state() -> Result<
         auth_mode,
         config.auth_path,
         shared_auth,
+        desktop_client_auth,
     ))
 }
 
@@ -402,12 +412,23 @@ fn toggle_popover(window: &tauri::WebviewWindow) {
 
 pub fn run() {
     let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                show_popover(&window);
+            }
+        }))
         .invoke_handler(tauri::generate_handler![
             commands::get_server_status,
             commands::start_server,
             commands::stop_server,
             commands::get_settings,
             commands::update_setting,
+            commands::list_client_api_keys,
+            commands::create_client_api_key,
+            commands::reveal_client_api_key,
+            commands::copy_client_api_key,
+            commands::delete_client_api_key,
+            commands::set_client_auth_enabled,
             commands::get_recent_logs,
             commands::get_token_usage,
             commands::get_models,
@@ -417,6 +438,7 @@ pub fn run() {
             commands::restart_app
         ])
         .plugin(tauri_plugin_positioner::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -584,7 +606,7 @@ pub fn run() {
                 }
             });
 
-            let (proxy_state, port, auth_mode, auth_path, shared_auth) =
+            let (proxy_state, port, auth_mode, auth_path, shared_auth, desktop_client_auth) =
                 create_proxy_state().map_err(std::io::Error::other)?;
 
             // auth.json 변경 감지 watcher 시작 (에러 시 warn만, 앱 종료 안 함)
@@ -603,6 +625,7 @@ pub fn run() {
             };
             app.manage(TauriAppState {
                 proxy_state: proxy_state.clone(),
+                client_auth: desktop_client_auth,
                 server_status: Arc::new(Mutex::new(ServerStatus {
                     running: false,
                     port,
