@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   getRecentLogs,
@@ -47,8 +47,6 @@ export default function Logs() {
   const [modelFilter, setModelFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [error, setError] = useState<string | null>(null);
-  const autoScroll = true;
-  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -74,8 +72,8 @@ export default function Logs() {
         } else {
           unlisten = await listen<LogEntry>("log-entry", (event) => {
             setLogs((prev) => {
-              const newLogs = [...prev, event.payload];
-              return newLogs.length > 500 ? newLogs.slice(-500) : newLogs;
+              const newLogs = [event.payload, ...prev];
+              return newLogs.length > 500 ? newLogs.slice(0, 500) : newLogs;
             });
           });
           if (!active) {
@@ -99,12 +97,6 @@ export default function Logs() {
     };
   }, []);
 
-  useEffect(() => {
-    if (autoScroll && scrollRef.current) {
-      scrollRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [logs, autoScroll]);
-
   const uniqueModels = Array.from(new Set(logs.map((l) => l.model).filter(Boolean))) as string[];
 
   const filteredLogs = logs.filter((log) => {
@@ -116,15 +108,15 @@ export default function Logs() {
   });
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="shrink-0 flex h-[57px] items-center justify-between gap-4 border-b px-4">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+    <div className="flex h-full flex-col">
+      <div className="flex h-[57px] shrink-0 items-center justify-between gap-2 overflow-hidden border-b px-3">
+        <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+          <div className="flex shrink-0 items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             <Activity aria-hidden="true" className="h-3.5 w-3.5" />
             Traffic
           </div>
           <Select value={modelFilter} onValueChange={setModelFilter}>
-            <SelectTrigger aria-label="Filter by model" className="w-[150px] h-8 text-xs">
+            <SelectTrigger aria-label="Filter by model" className="h-8 w-[140px] shrink-0 text-xs">
               <SelectValue placeholder="All Models" />
             </SelectTrigger>
             <SelectContent>
@@ -136,7 +128,7 @@ export default function Logs() {
           </Select>
 
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger aria-label="Filter by status" className="w-[130px] h-8 text-xs">
+            <SelectTrigger aria-label="Filter by status" className="h-8 w-[120px] shrink-0 text-xs">
               <SelectValue placeholder="All Status" />
             </SelectTrigger>
             <SelectContent>
@@ -147,11 +139,15 @@ export default function Logs() {
             </SelectContent>
           </Select>
 
-          <Badge variant="secondary" className="text-xs font-mono">
+          <Badge variant="secondary" className="shrink-0 font-mono text-xs">
             {filteredLogs.length}/{logs.length}
           </Badge>
           {error && (
-            <Badge variant="outline" role="alert" className="text-xs text-destructive-text border-destructive-text/30">
+            <Badge
+              variant="outline"
+              role="alert"
+              className="min-w-0 truncate border-destructive-text/30 text-xs text-destructive-text"
+            >
               {error}
             </Badge>
           )}
@@ -160,7 +156,7 @@ export default function Logs() {
         <Button
           variant="outline"
           size="sm"
-          className="h-8 text-xs text-destructive-text hover:text-destructive-text cursor-pointer"
+          className="h-8 shrink-0 cursor-pointer text-xs text-destructive-text hover:text-destructive-text"
           onClick={() => setLogs([])}
         >
           <Trash2 aria-hidden="true" className="w-3.5 h-3.5 mr-1.5" />
@@ -169,16 +165,16 @@ export default function Logs() {
       </div>
 
       <div className="flex-1 overflow-hidden">
-        <ScrollArea className="h-full">
-          <Table className="table-fixed">
-            <TableHeader className="sticky top-0 bg-background z-10">
+        <ScrollArea type="always" className="h-full">
+          <Table className="table-fixed" containerClassName="overflow-visible">
+            <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
                 <TableHead className="h-9 w-[72px] px-3 text-[11px] uppercase tracking-wider">Time</TableHead>
                 <TableHead className="h-9 px-3 text-[11px] uppercase tracking-wider">Request</TableHead>
                 <TableHead className="h-9 w-[76px] px-3 text-[11px] uppercase tracking-wider">Model</TableHead>
                 <TableHead className="h-9 w-[58px] px-3 text-[11px] uppercase tracking-wider">Status</TableHead>
-                <TableHead className="h-9 w-[64px] px-3 text-right text-[11px] uppercase tracking-wider">Tokens</TableHead>
-                <TableHead className="h-9 w-[54px] px-3 text-right text-[11px] uppercase tracking-wider">MS</TableHead>
+                <TableHead className="h-9 w-[96px] px-3 text-right text-[11px] uppercase tracking-wider">Tokens</TableHead>
+                <TableHead className="h-9 w-[64px] px-3 text-right text-[11px] uppercase tracking-wider">MS</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -213,20 +209,21 @@ export default function Logs() {
                         {log.status}
                       </Badge>
                     </TableCell>
-                    <TableCell className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">
+                    <TableCell
+                      className="max-w-[96px] truncate px-3 py-2 text-right font-mono text-xs text-muted-foreground"
+                      title={`${log.input_tokens ?? "—"}/${log.output_tokens ?? "—"}`}
+                    >
                       {log.input_tokens ?? "—"}/{log.output_tokens ?? "—"}
                     </TableCell>
-                    <TableCell className="px-3 py-2 text-right font-mono text-xs">
+                    <TableCell
+                      className="max-w-[64px] truncate px-3 py-2 text-right font-mono text-xs"
+                      title={String(log.duration_ms)}
+                    >
                       {log.duration_ms}
                     </TableCell>
                   </TableRow>
                 ))
               )}
-              <TableRow aria-hidden="true">
-                <TableCell colSpan={6} className="h-0 p-0">
-                  <div ref={scrollRef} />
-                </TableCell>
-              </TableRow>
             </TableBody>
           </Table>
         </ScrollArea>

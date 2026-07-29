@@ -73,6 +73,131 @@ describe("Tauri embedded WebDriver smoke", () => {
     expect(bodyText).toContain("Settings");
   });
 
+  it("keeps a large log table scrollable with a sticky header", async () => {
+    await browser.waitUntil(
+      async () =>
+        Boolean(
+          await browser.tauri.execute(
+            `Boolean(Array.from(document.querySelectorAll("button"))
+              .find((button) => button.textContent?.trim() === "Logs"))`,
+            mainWindow
+          )
+        ),
+      { timeout: 30000, timeoutMsg: "desktop UI did not render the Logs navigation" }
+    );
+    await browser.tauri.execute(
+      `Array.from(document.querySelectorAll("button"))
+        .find((button) => button.textContent?.trim() === "Logs")
+        ?.click()`,
+      mainWindow
+    );
+    await browser.waitUntil(
+      async () =>
+        Boolean(
+          await browser.tauri.execute(
+            `document.querySelector("thead") instanceof HTMLTableSectionElement`,
+            mainWindow
+          )
+        ),
+      { timeoutMsg: "logs page did not render" }
+    );
+
+    await browser.tauri.execute(
+      `(async () => {
+        for (let index = 0; index < 100; index += 1) {
+          await window.__TAURI__.event.emit("log-entry", {
+            id: "layout-log-" + index,
+            timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+            method: "POST",
+            path: "/v1/chat/completions/" + index,
+            model: "gpt-5.6-sol",
+            status: 200,
+            duration_ms: 123456,
+            input_tokens: 12345678,
+            output_tokens: 87654321,
+          });
+        }
+      })()`,
+      mainWindow
+    );
+    await browser.waitUntil(
+      async () =>
+        Number(
+          await browser.tauri.execute(
+            `document.querySelectorAll("tbody tr:not([aria-hidden='true'])").length`,
+            mainWindow
+          )
+        ) === 100,
+      { timeoutMsg: "logs page did not receive 100 entries" }
+    );
+    const initialLayout = JSON.parse(
+      String(
+        await browser.tauri.execute(
+          `(() => {
+            const main = document.querySelector("main");
+            const viewport = document.querySelector("[data-radix-scroll-area-viewport]");
+            const header = document.querySelector("thead");
+            const firstRequestCell = document.querySelector("tbody td:nth-child(2)");
+            const firstTokenCell = document.querySelector("tbody td:nth-child(5)");
+            const verticalScrollbar = document.querySelector('[data-orientation="vertical"]');
+            if (!(main instanceof HTMLElement) || !(viewport instanceof HTMLElement) ||
+                !(header instanceof HTMLTableSectionElement) ||
+                !(firstRequestCell instanceof HTMLTableCellElement) ||
+                !(firstTokenCell instanceof HTMLTableCellElement)) {
+              return JSON.stringify(null);
+            }
+            const viewportRect = viewport.getBoundingClientRect();
+            const headerRect = header.getBoundingClientRect();
+            return JSON.stringify({
+              mainHorizontalOverflow: main.scrollWidth > main.clientWidth,
+              viewportScrollable: viewport.scrollHeight > viewport.clientHeight,
+              viewportAtTop: viewport.scrollTop === 0,
+              headerPinned: Math.abs(headerRect.top - viewportRect.top) <= 1,
+              firstRequestTitle: firstRequestCell.title,
+              tokenOverflow: getComputedStyle(firstTokenCell).overflowX,
+              verticalScrollbarVisible: verticalScrollbar instanceof HTMLElement &&
+                verticalScrollbar.getBoundingClientRect().height > 0,
+            });
+          })()`,
+          mainWindow
+        )
+      )
+    );
+    expect(initialLayout).toEqual({
+      mainHorizontalOverflow: false,
+      viewportScrollable: true,
+      viewportAtTop: true,
+      headerPinned: true,
+      firstRequestTitle: "POST /v1/chat/completions/99",
+      tokenOverflow: "hidden",
+      verticalScrollbarVisible: true,
+    });
+
+    const scrolledLayout = JSON.parse(
+      String(
+        await browser.tauri.execute(
+          `(() => {
+            const viewport = document.querySelector("[data-radix-scroll-area-viewport]");
+            const header = document.querySelector("thead");
+            if (!(viewport instanceof HTMLElement) ||
+                !(header instanceof HTMLTableSectionElement)) {
+              return JSON.stringify(null);
+            }
+            viewport.scrollTop = viewport.scrollHeight;
+            const viewportRect = viewport.getBoundingClientRect();
+            const headerRect = header.getBoundingClientRect();
+            return JSON.stringify({
+              atBottom: viewport.scrollTop === viewport.scrollHeight - viewport.clientHeight,
+              headerPinned: Math.abs(headerRect.top - viewportRect.top) <= 1,
+            });
+          })()`,
+          mainWindow
+        )
+      )
+    );
+    expect(scrolledLayout).toEqual({ atBottom: true, headerPinned: true });
+  });
+
   it("exposes the Tauri WDIO bridge and can call IPC commands", async () => {
     let snapshot = await getMainWindowSnapshot();
     await browser.waitUntil(
