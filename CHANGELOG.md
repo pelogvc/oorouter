@@ -1,3 +1,15 @@
+# [1.3.0](https://github.com/pelogvc/oorouter/compare/v1.2.1...v1.3.0) (2026-08-10)
+
+
+### Bug Fixes
+
+* keep log table scrollable with sticky header ([cee6f1b](https://github.com/pelogvc/oorouter/commit/cee6f1bf9d1c76c86fc42318cfb763d9de0b7ba5))
+
+
+### Features
+
+* add optional OpenAI client authentication ([9cc7c87](https://github.com/pelogvc/oorouter/commit/9cc7c873a30cb17ce0ccf95a6cb5e7e4a7cc4142))
+
 ## [1.2.1](https://github.com/pelogvc/oorouter/compare/v1.2.0...v1.2.1) (2026-07-13)
 
 
