@@ -1,3 +1,10 @@
+## [1.3.1](https://github.com/pelogvc/oorouter/compare/v1.3.0...v1.3.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* 모델 목록을 Codex에서 동적으로 조회 ([a6fd9a9](https://github.com/pelogvc/oorouter/commit/a6fd9a968163798faa95c3b95d702962d404df3c))
+
 # [1.3.0](https://github.com/pelogvc/oorouter/compare/v1.2.1...v1.3.0) (2026-08-10)
 
 
