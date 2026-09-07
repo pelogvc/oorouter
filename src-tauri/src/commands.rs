@@ -1365,30 +1365,22 @@ pub async fn get_token_usage(
 }
 
 #[tauri::command]
-pub async fn get_models(_state: tauri::State<'_, TauriAppState>) -> Result<Vec<ModelDto>, String> {
-    let models = proxy_core::models::get_visible_models();
-
+pub async fn get_models(state: tauri::State<'_, TauriAppState>) -> Result<Vec<ModelDto>, String> {
+    let models = state
+        .proxy_state
+        .client
+        .fetch_models()
+        .await
+        .map_err(|error| error.to_string())?;
     Ok(models
-        .into_iter()
-        .map(|item| {
-            let id = item.name.trim_end_matches(":latest").to_string();
-            if let Some(def) = proxy_core::models::get_model_definition(&id) {
-                ModelDto {
-                    id: def.slug.to_string(),
-                    name: def.name.to_string(),
-                    context_length: def.context_length,
-                    supports_vision: def.supports_vision,
-                    visible: def.visible,
-                }
-            } else {
-                ModelDto {
-                    id: id.clone(),
-                    name: id,
-                    context_length: 400_000,
-                    supports_vision: true,
-                    visible: true,
-                }
-            }
+        .iter()
+        .filter(|model| model.is_visible())
+        .map(|model| ModelDto {
+            id: model.slug.clone(),
+            name: model.name().to_string(),
+            context_length: model.context_window,
+            supports_vision: model.supports_vision(),
+            visible: model.is_visible(),
         })
         .collect())
 }

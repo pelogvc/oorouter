@@ -5,6 +5,21 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CodexModel {
+    #[serde(default)]
+    pub slug: String,
+    #[serde(default)]
+    pub display_name: String,
+    #[serde(default)]
+    pub visibility: Option<String>,
+    #[serde(default)]
+    pub context_window: u64,
+    #[serde(default)]
+    pub input_modalities: Vec<String>,
+}
+
 // Auth types
 #[derive(Clone, Serialize, Deserialize)]
 pub struct CodexTokenData {

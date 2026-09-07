@@ -73,6 +73,30 @@ describe("Tauri embedded WebDriver smoke", () => {
     expect(bodyText).toContain("Settings");
   });
 
+  it("shows upstream models and metadata in the desktop registry", async () => {
+    await browser.tauri.execute(
+      `Array.from(document.querySelectorAll("button"))
+        .find((button) => button.textContent?.trim() === "Models")?.click()`, mainWindow
+    );
+    await browser.waitUntil(async () => {
+      const text = await browser.tauri.execute("document.body.innerText", mainWindow);
+      return String(text).includes("future-desktop-model");
+    }, { timeout: 15000, timeoutMsg: "upstream model did not appear in the desktop registry" });
+    const text = String(await browser.tauri.execute("document.body.innerText", mainWindow));
+    expect(text).toContain("654K");
+    expect(text).toContain("Yes");
+    expect(text).toContain("1 models");
+    expect(text).not.toContain("internal-model");
+    expect(text).not.toContain("gpt-5.6-sol");
+    const models = JSON.parse(String(await browser.tauri.execute(
+      `JSON.stringify(await window.__TAURI__.core.invoke("get_models"))`, mainWindow
+    )));
+    expect(models).toEqual([{
+      id: "future-desktop-model", name: "Future Desktop Model", context_length: 654000,
+      supports_vision: true, visible: true,
+    }]);
+  });
+
   it("keeps a large log table scrollable with a sticky header", async () => {
     await browser.waitUntil(
       async () =>

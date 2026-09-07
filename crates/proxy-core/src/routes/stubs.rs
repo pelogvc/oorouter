@@ -1,7 +1,9 @@
 // Ported from: src/plugins/ollama.ts (embed, ps, version, copy, delete, pull, push stubs)
 
 use axum::http::StatusCode;
-use axum::Json;
+use axum::{extract::State, response::IntoResponse, Json};
+
+use super::{map_proxy_error, AppState, RouteResult};
 use chrono::{Duration, SecondsFormat, Utc};
 use serde_json::json;
 
@@ -23,14 +25,16 @@ pub async fn post_embed(
     )
 }
 
-pub async fn get_ps() -> Json<OllamaPsResponse> {
-    use crate::models::get_visible_models;
+pub async fn get_ps(State(state): State<AppState>) -> RouteResult {
+    let models = state.client.fetch_models().await.map_err(map_proxy_error)?;
 
     let now = Utc::now();
     let now_str = now.to_rfc3339_opts(SecondsFormat::Millis, true);
     let expires_at = (now + Duration::minutes(5)).to_rfc3339_opts(SecondsFormat::Millis, true);
-    let models = get_visible_models()
-        .into_iter()
+    let models = models
+        .iter()
+        .filter(|model| model.is_visible())
+        .map(|model| model.to_ollama_model_info())
         .map(|m| OllamaPsModel {
             name: m.name.clone(),
             model: m.model.clone(),
@@ -43,7 +47,7 @@ pub async fn get_ps() -> Json<OllamaPsResponse> {
         })
         .collect();
 
-    Json(OllamaPsResponse { models })
+    Ok(Json(OllamaPsResponse { models }).into_response())
 }
 
 pub async fn get_version() -> Json<OllamaVersionResponse> {
@@ -88,18 +92,6 @@ mod tests {
         assert!(body["embeddings"]
             .as_array()
             .map_or(false, |a| a.is_empty()));
-    }
-
-    #[tokio::test]
-    async fn test_ps_returns_models() {
-        let Json(resp) = get_ps().await;
-        // visible 모델이 있어야 함
-        assert!(!resp.models.is_empty());
-        // expires_at, size_vram 필드 확인
-        let m = &resp.models[0];
-        assert_eq!(m.size_vram, 0);
-        assert!(m.expires_at.contains('T'));
-        assert!(m.modified_at.contains('T'));
     }
 
     #[tokio::test]

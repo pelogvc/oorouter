@@ -1,4 +1,4 @@
-use std::{collections::HashSet, str::FromStr};
+use std::{collections::HashSet, str::FromStr, time::Duration};
 
 use futures::StreamExt;
 use reqwest::{
@@ -10,7 +10,8 @@ use uuid::Uuid;
 use crate::auth::AuthInfo;
 use crate::auth_watcher::{read_shared_auth, SharedAuth};
 use crate::error::{ProxyError, Result};
-use crate::types::codex::CodexResponsesRequest;
+use crate::models::codex_client_version;
+use crate::types::codex::{CodexModel, CodexResponsesRequest};
 
 const BROWSER_HEADERS: &[(&str, &str)] = &[
     ("Content-Type", "application/json"),
@@ -234,10 +235,11 @@ impl CodexClient {
             .map_err(ProxyError::HttpError)
     }
 
-    pub async fn fetch_model_slugs(&self, codex_client_version: &str) -> Result<Vec<String>> {
+    pub async fn fetch_models(&self) -> Result<Vec<CodexModel>> {
+        let client_version = codex_client_version().await;
         let mut url = self.backend_url_for("models")?;
         url.query_pairs_mut()
-            .append_pair("client_version", codex_client_version);
+            .append_pair("client_version", &client_version);
         let mut headers = self.build_headers()?;
         headers.insert(
             reqwest::header::ACCEPT,
@@ -248,6 +250,7 @@ impl CodexClient {
             .client
             .get(url)
             .headers(headers)
+            .timeout(Duration::from_secs(5))
             .send()
             .await
             .map_err(ProxyError::HttpError)?;
@@ -263,31 +266,32 @@ impl CodexClient {
         }
         let body = read_limited_response_text(response, MAX_MODELS_RESPONSE_BODY_BYTES).await?;
 
-        let parsed: serde_json::Value = serde_json::from_str(&body)?;
+        let parsed: serde_json::Value = serde_json::from_str(&body)
+            .map_err(|_| ProxyError::BackendApiError("Malformed models response".to_string()))?;
         let models = parsed
             .get("models")
             .and_then(|models| models.as_array())
             .ok_or_else(|| ProxyError::BackendApiError("Malformed models response".to_string()))?;
 
-        let mut seen: HashSet<&str> = HashSet::new();
-        let mut slugs = Vec::new();
-        for model in models {
-            let Some(slug) = model.get("slug").and_then(|slug| slug.as_str()) else {
-                continue;
-            };
-            if slug.is_empty() || !seen.insert(slug) {
+        let mut seen = HashSet::new();
+        let mut definitions = Vec::new();
+        for value in models {
+            let mut model: CodexModel = serde_json::from_value(value.clone())
+                .map_err(|_| ProxyError::BackendApiError("Malformed model metadata".to_string()))?;
+            model.slug = model.slug.trim().trim_end_matches(":latest").to_string();
+            if model.slug.is_empty() || !seen.insert(model.slug.clone()) {
                 continue;
             }
-            slugs.push(slug.to_string());
+            definitions.push(model);
         }
 
-        if slugs.is_empty() {
+        if definitions.is_empty() {
             return Err(ProxyError::BackendApiError(
                 "Codex returned an empty models list".to_string(),
             ));
         }
 
-        Ok(slugs)
+        Ok(definitions)
     }
 
     pub fn session_id(&self) -> &str {

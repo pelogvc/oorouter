@@ -235,6 +235,22 @@ Dual-stack application:
 | POST | `/v1/chat/completions` | Chat completion |
 | GET | `/v1/models` | List models |
 
+### Model discovery
+
+The desktop Models page and `/api/tags`, `/api/show`, `/api/ps`, and `/v1/models`
+fetch the Codex model catalog on each request. Model IDs, context windows, and
+image support come from the upstream response; oorouter does not merge in a
+bundled model list. The desktop and Ollama lists follow upstream visibility,
+while `/v1/models` includes all returned model IDs. Failed catalog requests
+return an error instead of an outdated fallback list.
+
+`CODEX_VERSION` overrides the version sent to Codex. Otherwise oorouter reads
+`client_version` from `$CODEX_HOME/models_cache.json` (default `~/.codex`), with
+`0.153.0` as the minimum bundled fallback when that file is absent, invalid, or
+older. The cache supplies only the client version, never the model list. Keep
+Codex updated for models that require a newer client; deployments without a
+Codex cache can set `CODEX_VERSION` explicitly.
+
 ## Development
 
 ```bash

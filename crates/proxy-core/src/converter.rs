@@ -1,7 +1,6 @@
 // Ollama→Codex and OpenAI→Codex request converters
 // Ported from: src/providers/codex/converter.ts
 
-use crate::models::get_model_definition;
 use crate::types::codex::{
     CodexContentItem, CodexFunctionCallItem, CodexFunctionCallOutputItem, CodexInputItem,
     CodexMessageItem, CodexResponsesRequest,
@@ -29,9 +28,7 @@ pub fn resolve_model(model: &str) -> String {
 }
 
 fn model_supports_vision(model: &str) -> bool {
-    get_model_definition(model)
-        .map(|model| model.supports_vision)
-        .unwrap_or_else(|| !model.contains("spark"))
+    !model.contains("spark") && model != "gpt-5-codex-mini"
 }
 
 fn extract_text(content: &Option<OpenAIMessageContent>) -> String {

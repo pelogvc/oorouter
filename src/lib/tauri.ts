@@ -318,19 +318,6 @@ function parseOllamaTagsResponse(value: unknown): OllamaTagsResponse {
   return { models };
 }
 
-function browserModelContextLength(id: string): number {
-  if (id === "gpt-5.6-sol" || id === "gpt-5.6-terra" || id === "gpt-5.6-luna") {
-    return 372_000;
-  }
-  if (id === "gpt-5.5" || id === "gpt-5.4" || id === "gpt-5.4-pro") {
-    return 1_050_000;
-  }
-  if (id === "gpt-5.3-codex-spark") {
-    return 128_000;
-  }
-  return 400_000;
-}
-
 function parseBrowserModel(value: unknown): Model {
   const record = parseRecord(value);
   const id = readString(record, "name").replace(/:latest$/, "");
@@ -338,8 +325,8 @@ function parseBrowserModel(value: unknown): Model {
     id,
     name: id,
     visible: true,
-    context_length: browserModelContextLength(id),
-    supports_vision: !id.includes("spark"),
+    context_length: readNumber(record, "context_length"),
+    supports_vision: readBoolean(record, "supports_vision"),
   };
 }
 
@@ -356,13 +343,16 @@ function getBrowserProxyUrls(): string[] {
   ].filter((url, index, urls) => urls.indexOf(url) === index);
 }
 
-async function fetchProxyJson(path: string): Promise<unknown> {
+async function fetchProxyJson(
+  path: string,
+  timeoutMs = BROWSER_PROXY_REQUEST_TIMEOUT_MS
+): Promise<unknown> {
   let lastError: unknown = null;
   for (const url of getBrowserProxyUrls()) {
     const controller = new AbortController();
     const timeout = window.setTimeout(
       () => controller.abort(),
-      BROWSER_PROXY_REQUEST_TIMEOUT_MS
+      timeoutMs
     );
     try {
       const response = await fetch(`${url}${path}`, { signal: controller.signal });
@@ -370,7 +360,7 @@ async function fetchProxyJson(path: string): Promise<unknown> {
         throw new Error(`HTTP ${response.status}`);
       }
       browserProxyUrl = url;
-      return response.json();
+      return await response.json();
     } catch (error) {
       lastError = error;
     } finally {
@@ -516,7 +506,7 @@ export async function getTokenUsage(days: number = 7): Promise<TokenUsageRow[]> 
 
 export async function getModels(): Promise<Model[]> {
   if (!isRunningInTauri()) {
-    const data = parseOllamaTagsResponse(await fetchProxyJson("/api/tags"));
+    const data = parseOllamaTagsResponse(await fetchProxyJson("/api/tags", 6_000));
     return data.models.map(parseBrowserModel);
   }
 

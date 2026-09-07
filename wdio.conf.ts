@@ -69,7 +69,11 @@ async function startMockUpstream() {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
     if (request.method === "GET" && url.pathname === "/backend-api/codex/models") {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ models: [{ slug: "gpt-5.6-sol" }] }));
+      response.end(JSON.stringify({ models: [
+        { slug: "future-desktop-model", display_name: "Future Desktop Model", visibility: "list",
+          context_window: 654000, input_modalities: ["text", "image"] },
+        { slug: "internal-model", visibility: "hide", context_window: 123000, input_modalities: ["text"] },
+      ] }));
       return;
     }
 

@@ -129,6 +129,10 @@ pub struct OllamaModelInfo {
     pub size: u64,
     pub digest: String,
     pub details: OllamaModelDetails,
+    #[serde(default)]
+    pub context_length: u64,
+    #[serde(default)]
+    pub supports_vision: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

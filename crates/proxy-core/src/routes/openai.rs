@@ -1,5 +1,5 @@
-use std::time::{Duration, Instant};
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
+use std::time::Instant;
 
 use axum::{
     body::Body,
@@ -29,8 +29,6 @@ use crate::{
     usage::{record_token_usage, token_count_for_log},
 };
 
-const FALLBACK_CODEX_CLIENT_VERSION: &str = "0.144.1";
-const MODELS_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_RESPONSES_SSE_LINE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BACKEND_ERROR_BODY_BYTES: usize = 64 * 1024;
 const REDACTED_BACKEND_RESPONSE: &str = "<redacted sensitive backend response>";
@@ -712,77 +710,24 @@ pub async fn post_chat_completions(
     Ok((headers, Body::from_stream(stream)).into_response())
 }
 
-fn codex_client_version() -> String {
-    std::env::var("CODEX_VERSION")
-        .ok()
-        .filter(|version| !version.trim().is_empty())
-        .unwrap_or_else(|| FALLBACK_CODEX_CLIENT_VERSION.to_string())
-}
-
-fn model_response_from_slugs(slugs: Vec<String>) -> OpenAIModelsResponse {
-    let data = merge_visible_model_slugs(slugs)
+pub async fn get_models(State(state): State<AppState>) -> RouteResult {
+    let models = state.client.fetch_models().await.map_err(|error| {
+        openai_error(StatusCode::BAD_GATEWAY, error.to_string(), "upstream_error")
+    })?;
+    let data = models
         .into_iter()
         .map(|model| OpenAIModelObject {
-            id: model.trim_end_matches(":latest").to_string(),
+            id: model.slug,
             object: "model".to_string(),
             created: 0,
             owned_by: "codex-oauth".to_string(),
         })
         .collect();
-
-    OpenAIModelsResponse {
+    Ok(Json(OpenAIModelsResponse {
         object: "list".to_string(),
         data,
-    }
-}
-
-fn merge_visible_model_slugs(upstream_slugs: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut slugs = Vec::new();
-
-    for model in crate::models::get_visible_models() {
-        let slug = model.name.trim_end_matches(":latest").to_string();
-        if seen.insert(slug.clone()) {
-            slugs.push(slug);
-        }
-    }
-
-    for slug in upstream_slugs {
-        let normalized = slug.trim_end_matches(":latest").to_string();
-        if seen.insert(normalized.clone()) {
-            slugs.push(normalized);
-        }
-    }
-
-    slugs
-}
-
-pub async fn get_models(State(state): State<AppState>) -> RouteResult {
-    let client_version = codex_client_version();
-    let slugs = match tokio::time::timeout(
-        MODELS_FETCH_TIMEOUT,
-        state.client.fetch_model_slugs(&client_version),
-    )
-    .await
-    {
-        Ok(Ok(slugs)) => slugs,
-        Ok(Err(error)) => {
-            return Err(openai_error(
-                StatusCode::BAD_GATEWAY,
-                error.to_string(),
-                "upstream_error",
-            ));
-        }
-        Err(_) => {
-            return Err(openai_error(
-                StatusCode::BAD_GATEWAY,
-                "Timed out loading models from upstream.",
-                "upstream_error",
-            ));
-        }
-    };
-
-    Ok(Json(model_response_from_slugs(slugs)).into_response())
+    })
+    .into_response())
 }
 
 #[cfg(test)]

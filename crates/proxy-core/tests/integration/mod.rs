@@ -151,7 +151,8 @@ async fn spawn_mock_backend() -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>, Jo
                         "models": [
                             { "slug": "mock-codex" },
                             { "slug": "mock-codex" },
-                            { "slug": "mock-spark" }
+                            { "slug": "mock-spark", "visibility": "list", "context_window": 128000, "input_modalities": ["text"] },
+                            { "slug": "gpt-5.6-sol", "visibility": "list", "context_window": 272000, "input_modalities": ["text", "image"] }
                         ]
                     }))
                 }
@@ -753,7 +754,7 @@ async fn standalone_api_key_is_runtime_only_and_protects_only_openai_routes() {
         .await
         .expect("GET protected standalone route with valid key");
     assert_eq!(valid.status(), StatusCode::OK);
-    assert_eq!(models_request_count.load(Ordering::SeqCst), 1);
+    assert_eq!(models_request_count.load(Ordering::SeqCst), 2);
 
     let protected_output = protected_process.stop();
     assert!(!String::from_utf8_lossy(&protected_output.stdout).contains(key.expose_secret()));
@@ -802,7 +803,7 @@ async fn standalone_api_key_is_runtime_only_and_protects_only_openai_routes() {
         .await
         .expect("GET standalone route after restart without key");
     assert_eq!(reopened.status(), StatusCode::OK);
-    assert_eq!(models_request_count.load(Ordering::SeqCst), 2);
+    assert_eq!(models_request_count.load(Ordering::SeqCst), 3);
 
     let open_output = open_process.stop();
     let open_stdout = String::from_utf8_lossy(&open_output.stdout);
@@ -859,9 +860,14 @@ async fn integration_endpoints_with_live_axum_server() {
         .iter()
         .map(|model| model["name"].as_str().expect("tag model name"))
         .collect();
-    assert!(tag_names.contains(&"gpt-5.6-sol:latest"));
-    assert!(tag_names.contains(&"gpt-5.6-terra:latest"));
-    assert!(tag_names.contains(&"gpt-5.6-luna:latest"));
+    assert_eq!(
+        tag_names,
+        vec![
+            "mock-codex:latest",
+            "mock-spark:latest",
+            "gpt-5.6-sol:latest"
+        ]
+    );
 
     let version = http
         .get(format!("{}/api/version", base_url))
@@ -884,7 +890,7 @@ async fn integration_endpoints_with_live_axum_server() {
         .expect("POST /api/show valid");
     assert_eq!(show_ok.status(), StatusCode::OK);
     let show_json: serde_json::Value = show_ok.json().await.expect("POST /api/show json");
-    assert_eq!(show_json["model_info"]["gpt.context_length"], 372_000);
+    assert_eq!(show_json["model_info"]["gpt.context_length"], 272_000);
     assert!(show_json["capabilities"]
         .as_array()
         .expect("show capabilities")
@@ -1050,22 +1056,7 @@ async fn integration_endpoints_with_live_axum_server() {
         .iter()
         .map(|model| model["id"].as_str().expect("model id string"))
         .collect();
-    assert_eq!(
-        model_ids,
-        vec![
-            "gpt-5.6-sol",
-            "gpt-5.6-terra",
-            "gpt-5.6-luna",
-            "gpt-5.5",
-            "gpt-5.4",
-            "gpt-5.3-codex",
-            "gpt-5.2-codex",
-            "gpt-5.2",
-            "gpt-5.3-codex-spark",
-            "mock-codex",
-            "mock-spark",
-        ]
-    );
+    assert_eq!(model_ids, vec!["mock-codex", "mock-spark", "gpt-5.6-sol"]);
     assert!(data
         .iter()
         .all(|model| model["object"] == "model" && model["created"] == 0));
@@ -1129,9 +1120,206 @@ async fn integration_endpoints_with_live_axum_server() {
     assert_eq!(chat_v1_json["object"], "chat.completion");
     assert_eq!(chat_v1_json["choices"][0]["message"]["content"], "mock");
 
-    assert_eq!(models_request_count.load(Ordering::SeqCst), 1);
+    assert_eq!(models_request_count.load(Ordering::SeqCst), 5);
     assert_eq!(responses_request_count.load(Ordering::SeqCst), 7);
 
     proxy_handle.abort();
     mock_handle.abort();
+}
+
+#[tokio::test]
+async fn integration_model_catalog_follows_upstream() {
+    let catalog = Arc::new(tokio::sync::RwLock::new(serde_json::json!({
+        "models": [
+            { "slug": "future-model", "display_name": "Future Model", "visibility": "list",
+              "context_window": 987654, "input_modalities": ["text", "image"] },
+            { "slug": "internal-model", "visibility": "hide", "context_window": 1234,
+              "input_modalities": ["text"] },
+            { "slug": "future-model" },
+            { "slug": "" }
+        ]
+    })));
+    let handler_catalog = Arc::clone(&catalog);
+    let upstream = Router::new().route(
+        "/backend-api/codex/models",
+        get(
+            move |axum::extract::Query(query): axum::extract::Query<
+                std::collections::HashMap<String, String>,
+            >| {
+                let catalog = Arc::clone(&handler_catalog);
+                async move {
+                    assert!(query
+                        .get("client_version")
+                        .is_some_and(|version| !version.is_empty()));
+                    Json(catalog.read().await.clone())
+                }
+            },
+        ),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let upstream_handle =
+        tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+    let (base_url, _temp_dir, proxy_handle) =
+        spawn_proxy_server(format!("http://{addr}/backend-api/codex/responses")).await;
+    let http = reqwest::Client::new();
+
+    let tags: serde_json::Value = http
+        .get(format!("{base_url}/api/tags"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(tags["models"].as_array().unwrap().len(), 1);
+    assert_eq!(tags["models"][0]["name"], "future-model:latest");
+    assert_eq!(tags["models"][0]["context_length"], 987654);
+    assert_eq!(tags["models"][0]["supports_vision"], true);
+
+    let models: serde_json::Value = http
+        .get(format!("{base_url}/v1/models"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(models["data"].as_array().unwrap().len(), 2);
+    assert_eq!(models["data"][0]["id"], "future-model");
+    assert_eq!(models["data"][1]["id"], "internal-model");
+
+    let show: serde_json::Value = http
+        .post(format!("{base_url}/api/show"))
+        .json(&serde_json::json!({ "model": "future-model:latest" }))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(show["model_info"]["gpt.context_length"], 987654);
+    assert!(show["capabilities"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("vision")));
+
+    *catalog.write().await = serde_json::json!({ "models": [
+        { "slug": "newer-model", "visibility": "list", "context_window": 54321,
+          "input_modalities": ["text"] }
+    ] });
+    let updated: serde_json::Value = http
+        .get(format!("{base_url}/api/tags"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(updated["models"].as_array().unwrap().len(), 1);
+    assert_eq!(updated["models"][0]["name"], "newer-model:latest");
+    assert_eq!(updated["models"][0]["supports_vision"], false);
+    let removed = http
+        .post(format!("{base_url}/api/show"))
+        .json(&serde_json::json!({ "name": "future-model" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(removed.status(), StatusCode::NOT_FOUND);
+
+    for invalid in [
+        serde_json::json!({ "models": [] }),
+        serde_json::json!({ "unexpected": [] }),
+    ] {
+        *catalog.write().await = invalid;
+        for path in ["/api/tags", "/v1/models"] {
+            let response = http.get(format!("{base_url}{path}")).send().await.unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_GATEWAY, "{path}");
+        }
+    }
+    proxy_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn standalone_model_catalog_uses_current_codex_version() {
+    let upstream = Router::new().route(
+        "/backend-api/codex/models",
+        get(|axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>| async move {
+            Json(serde_json::json!({ "models": [{ "slug": format!("version-{}", query["client_version"]) }] }))
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let upstream_handle =
+        tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+    let temp_dir = TempDir::new().unwrap();
+    let auth_path = temp_dir.path().join("auth.json");
+    std::fs::write(&auth_path, r#"{"OPENAI_API_KEY":"test-key"}"#).unwrap();
+    let cache_path = temp_dir.path().join("models_cache.json");
+    let data_home = temp_dir.path().join("data");
+    let port = reserve_loopback_port();
+    let base_url = format!("http://127.0.0.1:{port}");
+    let mut command = standalone_command(
+        port,
+        "127.0.0.1",
+        &auth_path,
+        &data_home,
+        &format!("http://{addr}/backend-api/codex/responses"),
+    );
+    command
+        .env("CODEX_HOME", temp_dir.path())
+        .env_remove("CODEX_VERSION");
+    let mut child = ChildProcess::spawn(&mut command);
+    let http = reqwest::Client::new();
+    wait_for_standalone_server(&mut child, &http, &base_url).await;
+    for (cache, expected) in [
+        (
+            r#"{"client_version":"0.170.0","models":[{"slug":"cached-only-model"}]}"#,
+            "version-0.170.0",
+        ),
+        (r#"{"client_version":"0.171.0"}"#, "version-0.171.0"),
+        (r#"{"client_version":"0.111.0"}"#, "version-0.153.0"),
+        (r#"{"client_version":"invalid"}"#, "version-0.153.0"),
+        ("invalid JSON", "version-0.153.0"),
+    ] {
+        std::fs::write(&cache_path, cache).unwrap();
+        let body: serde_json::Value = http
+            .get(format!("{base_url}/v1/models"))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(body["data"].as_array().unwrap().len(), 1);
+        assert_eq!(body["data"][0]["id"], expected);
+    }
+    child.stop();
+    command.env("CODEX_VERSION", "0.172.0");
+    let mut child = ChildProcess::spawn(&mut command);
+    wait_for_standalone_server(&mut child, &http, &base_url).await;
+    let body: serde_json::Value = http
+        .get(format!("{base_url}/v1/models"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["data"][0]["id"], "version-0.172.0");
+    child.stop();
+    upstream_handle.abort();
 }
