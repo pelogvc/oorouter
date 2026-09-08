@@ -1,3 +1,10 @@
+## [1.3.2](https://github.com/pelogvc/oorouter/compare/v1.3.1...v1.3.2) (2026-09-08)
+
+
+### Bug Fixes
+
+* 설치된 Codex CLI에서 모델 조회 버전 확인 ([dd6812d](https://github.com/pelogvc/oorouter/commit/dd6812d54db47d516e1a2dfb4c586964d83337d6))
+
 ## [1.3.1](https://github.com/pelogvc/oorouter/compare/v1.3.0...v1.3.1) (2026-09-07)
 
 
