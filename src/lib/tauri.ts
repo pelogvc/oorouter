@@ -506,7 +506,7 @@ export async function getTokenUsage(days: number = 7): Promise<TokenUsageRow[]> 
 
 export async function getModels(): Promise<Model[]> {
   if (!isRunningInTauri()) {
-    const data = parseOllamaTagsResponse(await fetchProxyJson("/api/tags", 6_000));
+    const data = parseOllamaTagsResponse(await fetchProxyJson("/api/tags", 8_000));
     return data.models.map(parseBrowserModel);
   }
 

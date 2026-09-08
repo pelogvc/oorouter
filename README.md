@@ -97,11 +97,13 @@ being readable by the fixed non-root runtime user.
 
 Publish the port on the host loopback address to keep the default local-only
 access boundary. Mount Codex configuration read-only at `/config/codex`, while
-SQLite usage data uses a separate writable named volume:
+SQLite usage data uses a separate writable named volume. Pass the host CLI
+version because the image does not include Codex:
 
 ```bash
 docker run --detach --rm --name oorouter \
   --publish 127.0.0.1:11434:11434 \
+  --env CODEX_VERSION="$(codex --version | awk '{print $2}')" \
   --mount type=bind,src="$HOME/.codex",dst=/config/codex,readonly \
   --mount type=volume,src=oorouter-data,dst=/data \
   oorouter
@@ -117,6 +119,7 @@ mkdir -p "$HOME/.local/share/oorouter-docker"
 
 docker run --detach --rm --name oorouter \
   --publish 127.0.0.1:11434:11434 \
+  --env CODEX_VERSION="$(codex --version | awk '{print $2}')" \
   --mount type=bind,src="$HOME/.codex",dst=/config/codex,readonly \
   --mount type=bind,src="$HOME/.local/share/oorouter-docker",dst=/data \
   oorouter
@@ -137,6 +140,7 @@ API_KEY_TWO="sk-$(openssl rand -base64 96 | tr -dc 'A-Za-z0-9' | head -c 64)"
 
 docker run --detach --rm --name oorouter \
   --publish 127.0.0.1:11434:11434 \
+  --env CODEX_VERSION="$(codex --version | awk '{print $2}')" \
   --mount type=bind,src="$HOME/.codex",dst=/config/codex,readonly \
   --mount type=volume,src=oorouter-data,dst=/data \
   oorouter \
@@ -244,12 +248,16 @@ bundled model list. The desktop and Ollama lists follow upstream visibility,
 while `/v1/models` includes all returned model IDs. Failed catalog requests
 return an error instead of an outdated fallback list.
 
-`CODEX_VERSION` overrides the version sent to Codex. Otherwise oorouter reads
-`client_version` from `$CODEX_HOME/models_cache.json` (default `~/.codex`), with
-`0.153.0` as the minimum bundled fallback when that file is absent, invalid, or
-older. The cache supplies only the client version, never the model list. Keep
-Codex updated for models that require a newer client; deployments without a
-Codex cache can set `CODEX_VERSION` explicitly.
+oorouter runs the installed Codex CLI with `--version` for each catalog request.
+It searches `PATH`, then `~/.local/bin/codex`; macOS also checks the standard
+Homebrew locations. This works when a desktop app has a smaller `PATH` than an
+interactive terminal and picks up CLI updates without restarting oorouter.
+The model cache and fixed version defaults are not used. A missing CLI, invalid
+version output, or a command that takes over two seconds produces an error.
+
+`CODEX_VERSION` remains an explicit override for deployments such as Docker
+that do not have Codex installed. Set it to the version of the Codex installation
+used with that deployment.
 
 ## Development
 

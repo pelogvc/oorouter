@@ -1,12 +1,12 @@
-use std::path::PathBuf;
+use std::{io::ErrorKind, path::PathBuf, process::Stdio, time::Duration};
 
 use chrono::{SecondsFormat, Utc};
-use serde::Deserialize;
+use tokio::process::Command;
+
+use crate::error::{ProxyError, Result};
 
 use crate::types::codex::CodexModel;
 use crate::types::ollama::{OllamaModelDetails, OllamaModelInfo};
-
-const FALLBACK_CODEX_CLIENT_VERSION: &str = "0.153.0";
 
 impl CodexModel {
     pub fn is_visible(&self) -> bool {
@@ -60,47 +60,81 @@ pub fn create_model_details() -> OllamaModelDetails {
     }
 }
 
-fn version_numbers(version: &str) -> Option<[u64; 3]> {
-    let mut parts = version.split('-').next()?.split('.');
-    let numbers = [
-        parts.next()?.parse().ok()?,
-        parts.next()?.parse().ok()?,
-        parts.next()?.parse().ok()?,
-    ];
-    parts.next().is_none().then_some(numbers)
+fn codex_executables() -> Vec<PathBuf> {
+    let name = if cfg!(windows) { "codex.exe" } else { "codex" };
+    let mut executables = vec![PathBuf::from(name)];
+    if let Some(home) = std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .or_else(|| std::env::var_os("USERPROFILE"))
+    {
+        executables.push(PathBuf::from(home).join(".local").join("bin").join(name));
+    }
+    #[cfg(target_os = "macos")]
+    executables.extend([
+        PathBuf::from("/opt/homebrew/bin/codex"),
+        PathBuf::from("/usr/local/bin/codex"),
+    ]);
+    executables
 }
 
-pub async fn codex_client_version() -> String {
+fn parse_codex_version(stdout: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(stdout).ok()?;
+    let version = text.trim().strip_prefix("codex-cli ")?.trim();
+    if !version
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || b".-+".contains(&byte))
+    {
+        return None;
+    }
+    let mut numbers = version.split(['-', '+']).next()?.split('.');
+    for _ in 0..3 {
+        numbers.next()?.parse::<u64>().ok()?;
+    }
+    numbers.next().is_none().then(|| version.to_string())
+}
+
+pub async fn codex_client_version() -> Result<String> {
     if let Ok(version) = std::env::var("CODEX_VERSION") {
         if !version.trim().is_empty() {
-            return version.trim().to_string();
+            return Ok(version.trim().to_string());
         }
     }
 
-    cached_codex_client_version()
-        .await
-        .unwrap_or_else(|| FALLBACK_CODEX_CLIENT_VERSION.to_string())
-}
-
-async fn cached_codex_client_version() -> Option<String> {
-    #[derive(Deserialize)]
-    struct CacheVersion {
-        client_version: String,
+    for executable in codex_executables() {
+        let mut command = Command::new(&executable);
+        command
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        let output = match tokio::time::timeout(Duration::from_secs(2), command.output()).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(error)) if error.kind() == ErrorKind::NotFound => continue,
+            Ok(Err(error)) => {
+                return Err(ProxyError::ConfigError(format!(
+                    "Could not run Codex CLI at {}: {error}",
+                    executable.display()
+                )))
+            }
+            Err(_) => {
+                return Err(ProxyError::ConfigError(
+                    "Codex --version timed out".to_string(),
+                ))
+            }
+        };
+        if !output.status.success() {
+            return Err(ProxyError::ConfigError(format!(
+                "Codex --version failed at {} ({})",
+                executable.display(),
+                output.status
+            )));
+        }
+        return parse_codex_version(&output.stdout).ok_or_else(|| {
+            ProxyError::ConfigError("Codex --version returned an invalid version".to_string())
+        });
     }
 
-    let codex_home = std::env::var_os("CODEX_HOME")
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .or_else(|| std::env::var_os("USERPROFILE"))
-                .map(|home| PathBuf::from(home).join(".codex"))
-        })?;
-    let contents = tokio::fs::read(codex_home.join("models_cache.json"))
-        .await
-        .ok()?;
-    let cache: CacheVersion = serde_json::from_slice(&contents).ok()?;
-    let version = version_numbers(&cache.client_version)?;
-    let minimum = version_numbers(FALLBACK_CODEX_CLIENT_VERSION)?;
-    (version >= minimum).then_some(cache.client_version)
+    Err(ProxyError::ConfigError(
+        "Codex CLI was not found. Install Codex or set CODEX_VERSION explicitly.".to_string(),
+    ))
 }

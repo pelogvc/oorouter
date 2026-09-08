@@ -904,14 +904,17 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        let client = std::sync::Arc::new(crate::client::CodexClient::new(
-            crate::auth::AuthInfo {
-                mode: crate::auth::AuthMode::ApiKey,
-                access_token: "test-key".to_string(),
-                account_id: None,
-            },
-            api_url,
-        ));
+        let client = std::sync::Arc::new(
+            crate::client::CodexClient::new(
+                crate::auth::AuthInfo {
+                    mode: crate::auth::AuthMode::ApiKey,
+                    access_token: "test-key".to_string(),
+                    account_id: None,
+                },
+                api_url,
+            )
+            .with_codex_version("0.1.0"),
+        );
         let state = AppState {
             client,
             client_auth: Default::default(),

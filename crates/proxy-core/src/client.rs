@@ -126,6 +126,7 @@ pub struct CodexClient {
     auth: SharedAuth,
     api_url: String,
     session_id: String,
+    codex_version: Option<String>,
 }
 
 impl CodexClient {
@@ -139,7 +140,13 @@ impl CodexClient {
             auth,
             api_url,
             session_id: Uuid::new_v4().to_string(),
+            codex_version: None,
         }
+    }
+
+    pub fn with_codex_version(mut self, version: impl Into<String>) -> Self {
+        self.codex_version = Some(version.into());
+        self
     }
 
     fn build_headers(&self) -> Result<HeaderMap> {
@@ -236,7 +243,10 @@ impl CodexClient {
     }
 
     pub async fn fetch_models(&self) -> Result<Vec<CodexModel>> {
-        let client_version = codex_client_version().await;
+        let client_version = match &self.codex_version {
+            Some(version) => version.clone(),
+            None => codex_client_version().await?,
+        };
         let mut url = self.backend_url_for("models")?;
         url.query_pairs_mut()
             .append_pair("client_version", &client_version);

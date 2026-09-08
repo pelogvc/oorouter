@@ -258,6 +258,7 @@ fn standalone_command(
         .env("AUTH_PATH", auth_path)
         .env("XDG_DATA_HOME", data_home)
         .env("CHATGPT_API_URL", mock_api_url)
+        .env("CODEX_VERSION", "0.1.0")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     command
@@ -267,14 +268,17 @@ async fn spawn_proxy_server(api_url: String) -> (String, TempDir, JoinHandle<()>
     let temp_dir = TempDir::new().expect("create temp dir");
     let db_path = temp_dir.path().join("integration.db");
     let db = Arc::new(Database::new(&db_path).await.expect("create sqlite db"));
-    let client = Arc::new(CodexClient::new(
-        AuthInfo {
-            mode: AuthMode::ApiKey,
-            access_token: "test-key".to_string(),
-            account_id: None,
-        },
-        api_url,
-    ));
+    let client = Arc::new(
+        CodexClient::new(
+            AuthInfo {
+                mode: AuthMode::ApiKey,
+                access_token: "test-key".to_string(),
+                account_id: None,
+            },
+            api_url,
+        )
+        .with_codex_version("0.1.0"),
+    );
 
     let state = AppState {
         client,
@@ -302,14 +306,17 @@ async fn spawn_proxy_server_with_client_auth(
     let temp_dir = TempDir::new().expect("create temp dir");
     let db_path = temp_dir.path().join("integration.db");
     let db = Arc::new(Database::new(&db_path).await.expect("create sqlite db"));
-    let client = Arc::new(CodexClient::new(
-        AuthInfo {
-            mode: AuthMode::ApiKey,
-            access_token: "test-key".to_string(),
-            account_id: None,
-        },
-        api_url,
-    ));
+    let client = Arc::new(
+        CodexClient::new(
+            AuthInfo {
+                mode: AuthMode::ApiKey,
+                access_token: "test-key".to_string(),
+                account_id: None,
+            },
+            api_url,
+        )
+        .with_codex_version("0.1.0"),
+    );
 
     let state = AppState {
         client,
@@ -1249,8 +1256,22 @@ async fn integration_model_catalog_follows_upstream() {
     upstream_handle.abort();
 }
 
+#[cfg(unix)]
+fn write_codex_executable(path: &std::path::Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::create_dir_all(path.parent().expect("Codex executable directory")).unwrap();
+    std::fs::write(
+        path,
+        format!("#!/bin/sh\n[ \"$1\" = \"--version\" ] || exit 2\n{body}\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[cfg(unix)]
 #[tokio::test]
-async fn standalone_model_catalog_uses_current_codex_version() {
+async fn standalone_model_catalog_uses_installed_codex_version() {
     let upstream = Router::new().route(
         "/backend-api/codex/models",
         get(|axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>| async move {
@@ -1264,7 +1285,16 @@ async fn standalone_model_catalog_uses_current_codex_version() {
     let temp_dir = TempDir::new().unwrap();
     let auth_path = temp_dir.path().join("auth.json");
     std::fs::write(&auth_path, r#"{"OPENAI_API_KEY":"test-key"}"#).unwrap();
-    let cache_path = temp_dir.path().join("models_cache.json");
+    std::fs::write(
+        temp_dir.path().join("models_cache.json"),
+        r#"{"client_version":"0.999.0","models":[{"slug":"cached-only-model"}]}"#,
+    )
+    .unwrap();
+    let bin = temp_dir.path().join("bin");
+    let executable = bin.join("codex");
+    let home_executable = temp_dir.path().join(".local/bin/codex");
+    write_codex_executable(&home_executable, "printf 'codex-cli 0.160.0\\n'");
+    write_codex_executable(&executable, "printf 'codex-cli 0.170.0\\n'");
     let data_home = temp_dir.path().join("data");
     let port = reserve_loopback_port();
     let base_url = format!("http://127.0.0.1:{port}");
@@ -1276,22 +1306,15 @@ async fn standalone_model_catalog_uses_current_codex_version() {
         &format!("http://{addr}/backend-api/codex/responses"),
     );
     command
+        .env("PATH", &bin)
+        .env("HOME", temp_dir.path())
         .env("CODEX_HOME", temp_dir.path())
         .env_remove("CODEX_VERSION");
     let mut child = ChildProcess::spawn(&mut command);
     let http = reqwest::Client::new();
     wait_for_standalone_server(&mut child, &http, &base_url).await;
-    for (cache, expected) in [
-        (
-            r#"{"client_version":"0.170.0","models":[{"slug":"cached-only-model"}]}"#,
-            "version-0.170.0",
-        ),
-        (r#"{"client_version":"0.171.0"}"#, "version-0.171.0"),
-        (r#"{"client_version":"0.111.0"}"#, "version-0.153.0"),
-        (r#"{"client_version":"invalid"}"#, "version-0.153.0"),
-        ("invalid JSON", "version-0.153.0"),
-    ] {
-        std::fs::write(&cache_path, cache).unwrap();
+    for version in ["0.170.0", "0.171.0-alpha.2", "0.111.0"] {
+        write_codex_executable(&executable, &format!("printf 'codex-cli {version}\\n'"));
         let body: serde_json::Value = http
             .get(format!("{base_url}/v1/models"))
             .send()
@@ -1303,7 +1326,38 @@ async fn standalone_model_catalog_uses_current_codex_version() {
             .await
             .unwrap();
         assert_eq!(body["data"].as_array().unwrap().len(), 1);
-        assert_eq!(body["data"][0]["id"], expected);
+        assert_eq!(body["data"][0]["id"], format!("version-{version}"));
+    }
+    std::fs::remove_file(&executable).unwrap();
+    let body: serde_json::Value = http
+        .get(format!("{base_url}/v1/models"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["data"][0]["id"], "version-0.160.0");
+
+    for script in [
+        "exit 1",
+        "printf 'unexpected version output\\n'",
+        "exec /bin/sleep 30",
+    ] {
+        write_codex_executable(&home_executable, script);
+        let started = std::time::Instant::now();
+        let response = http
+            .get(format!("{base_url}/v1/models"))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert!(body["error"]["message"].as_str().unwrap().contains("Codex"));
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
     child.stop();
     command.env("CODEX_VERSION", "0.172.0");

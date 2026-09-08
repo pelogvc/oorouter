@@ -120,6 +120,7 @@ export const config: Options.Testrunner = {
         captureFrontendLogs: true,
         env: {
           AUTH_PATH: authPath,
+          CODEX_VERSION: "0.1.0",
           XDG_DATA_HOME: dataHome,
           PORT: proxyPort,
           CHATGPT_API_URL: upstreamResponsesUrl,

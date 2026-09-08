@@ -221,6 +221,7 @@ function createCapabilities(
     startTimeout: 60_000,
     env: {
       AUTH_PATH: authPath,
+      CODEX_VERSION: "0.1.0",
       XDG_DATA_HOME: dataHome,
       PORT: String(proxyPort),
       CHATGPT_API_URL: `http://127.0.0.1:${upstreamPort}/backend-api/codex/responses`,
