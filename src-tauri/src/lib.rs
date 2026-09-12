@@ -378,10 +378,12 @@ pub(crate) fn update_tray_icon_for_state(
         if let Ok(icon) = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))
         {
             let _ = tray.set_icon(Some(icon));
+            let _ = tray.set_icon_as_template(true);
         }
     } else {
         let icon = tauri::image::Image::new(&ERROR_ICON_RGBA, 32, 32);
         let _ = tray.set_icon(Some(icon));
+        let _ = tray.set_icon_as_template(false);
     }
     tracing::debug!(
         state = if running { "running" } else { "error" },
@@ -392,6 +394,7 @@ pub(crate) fn update_tray_icon_for_state(
 pub(crate) fn update_tray_icon_for_stopped(tray: &tauri::tray::TrayIcon<impl tauri::Runtime>) {
     if let Ok(icon) = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png")) {
         let _ = tray.set_icon(Some(icon));
+        let _ = tray.set_icon_as_template(true);
     }
     tracing::debug!(state = "stopped", "tray icon state updated");
 }
@@ -484,6 +487,7 @@ pub fn run() {
 
             let _tray = TrayIconBuilder::with_id("main-tray")
                 .icon(icon)
+                .icon_as_template(true)
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .tooltip("oorouter")
